@@ -899,7 +899,7 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
     input_txt = tmp_root / "input.txt"
     input_txt.write_text("Canvas Raw Input (aggregated page and file text)\n", encoding="utf-8")
 
-        driver = build_driver(headless=headless)
+    driver = build_driver(headless=headless)
     try:
         # First, try to reuse an existing warm session
         if status_callback:
@@ -950,3 +950,4 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
             driver.quit()
 
     # Do NOT delete tmp_root here; app.py will clean up after embedding
+
