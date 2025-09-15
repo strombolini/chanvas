@@ -87,7 +87,7 @@ def build_driver(headless: bool):
             "plugins.always_open_pdf_externally": True,
         },
     )
-        # Persisted Chrome profile so we keep the Canvas login warm between runs
+    # Persisted Chrome profile so we keep the Canvas login warm between runs
     if PERSIST_SESSION_DIR:
         os.makedirs(PERSIST_SESSION_DIR, exist_ok=True)
         chrome_opts.add_argument(f"--user-data-dir={PERSIST_SESSION_DIR}")
@@ -950,4 +950,5 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
             driver.quit()
 
     # Do NOT delete tmp_root here; app.py will clean up after embedding
+
 
