@@ -40,6 +40,11 @@ MIN_TEXT_LEN_TO_RECORD = int(os.environ.get("MIN_TEXT_LEN_TO_RECORD", "80"))
 # Hard caps to bound per-unit memory
 MAX_PAGE_CHARS = int(os.environ.get("MAX_PAGE_CHARS", "50000"))   # per Canvas page write cap
 MAX_FILE_CHARS = int(os.environ.get("MAX_FILE_CHARS", "200000"))  # per file write cap
+# --- Warm-session settings (read by app.py edits) ----------------------------
+REUSE_SESSION_ONLY = os.environ.get("OCEAN_REUSE_SESSION_ONLY", "0") == "1"
+PERSIST_SESSION_DIR = os.environ.get("OCEAN_PERSIST_SESSION_DIR", "")
+CHROME_PROFILE_DIR = os.environ.get("OCEAN_CHROME_PROFILE_DIR", "Default")
+
 
 
 def trace_exc(msg="Exception"):
@@ -82,6 +87,14 @@ def build_driver(headless: bool):
             "plugins.always_open_pdf_externally": True,
         },
     )
+        # Persisted Chrome profile so we keep the Canvas login warm between runs
+    if PERSIST_SESSION_DIR:
+        os.makedirs(PERSIST_SESSION_DIR, exist_ok=True)
+        chrome_opts.add_argument(f"--user-data-dir={PERSIST_SESSION_DIR}")
+        chrome_opts.add_argument(f"--profile-directory={CHROME_PROFILE_DIR}")
+        # Helps avoid some profile-related flakiness in containers
+        chrome_opts.add_argument("--disable-features=DialMediaRouteProvider")
+
 
     chrome_bin = (
         os.environ.get("GOOGLE_CHROME_BIN")
@@ -226,6 +239,36 @@ def normalize_link(href, course_id: str) -> str:
 
     return url
 
+def session_looks_logged_in(driver) -> bool:
+    """
+    Heuristic: load Canvas, see if we land on dashboard/courses and *not* on a login flow.
+    """
+    try:
+        driver.get(START_URL)
+        WebDriverWait(driver, 6).until(_fallback_any_of(
+            EC.presence_of_element_located((By.ID, "dashboard")),
+            EC.presence_of_element_located((By.XPATH, "//a[contains(@href, '/courses')]"))
+        ))
+    except Exception:
+        # Even if wait fails, inspect URL to detect login pages
+        pass
+
+    try:
+        cur = (driver.current_url or "").lower()
+    except Exception:
+        cur = ""
+
+    # Explicit login patterns
+    if "/login" in cur or "/saml" in cur:
+        return False
+
+    # Login form present?
+    with contextlib.suppress(Exception):
+        driver.find_element(By.XPATH, "//input[@name='j_username' or @id='username']")
+        return False
+
+    # Looks like we’re in a logged-in context (dashboard/courses/etc.)
+    return True
 
 def login_canvas(driver, username, password, status_callback: Callable[[str, str], None]):
     wait = WebDriverWait(driver, 30)
@@ -856,12 +899,29 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
     input_txt = tmp_root / "input.txt"
     input_txt.write_text("Canvas Raw Input (aggregated page and file text)\n", encoding="utf-8")
 
-    driver = build_driver(headless=headless)
+        driver = build_driver(headless=headless)
     try:
+        # First, try to reuse an existing warm session
         if status_callback:
-            status_callback("status", "logging_in")
+            status_callback("status", "checking_session")
 
-        login_canvas(driver, username, password, status_callback)
+        logged_in = session_looks_logged_in(driver)
+
+        if not logged_in:
+            if REUSE_SESSION_ONLY or not (username and password):
+                # In reuse-only mode or no creds provided: do NOT log in
+                if status_callback:
+                    status_callback("log", "No valid Canvas session and reuse-only mode set -> skipping login")
+                    status_callback("status", "login_required")
+                return {"input_path": "", "tmp_root": str(tmp_root)}
+
+            # Allowed to log in (manual run)
+            if status_callback:
+                status_callback("status", "logging_in")
+            login_canvas(driver, username, password, status_callback)
+        else:
+            if status_callback:
+                status_callback("status", "logged_in")
 
         if status_callback:
             status_callback("status", "discovering_courses")
@@ -888,4 +948,5 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
     finally:
         with contextlib.suppress(Exception):
             driver.quit()
+
     # Do NOT delete tmp_root here; app.py will clean up after embedding
