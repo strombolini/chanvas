@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <div class="title">Chat with your files</div>
+  <form method="post" class="col">
+    <div class="col">
+      <label>Question</label>
+      <textarea name="question" rows="4" placeholder="Ask about deadlines, grading policy, readings, announcements, etc." required>{{ question or "" }}</textarea>
+    </div>
+    <button class="btn mt" type="submit">Ask</button>
+  </form>
+  {% if answer is not none %}
+  <div class="mt">
+    <div class="title" style="font-size:18px">Answer</div>
+    <pre>{{ answer }}</pre>
+  </div>
+  {% endif %}
+  {% if chunks %}
+  <div class="mt">
+    <div class="title" style="font-size:18px">Top snippets used</div>
+    <ul>
+      {% for (t, s) in chunks %}
+        <li class="mut">[{{ loop.index }}] score={{ "%.3f"|format(s) }} — {{ t[:200] }}{% if t|length > 200 %}…{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

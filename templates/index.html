@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <div class="title">Welcome</div>
+  <p class="mut">Sign up to securely run the Canvas scraping on a server and chat with the retrieved materials using RAG.</p>
+  <div class="mt">
+    <a class="btn" href="{{ url_for('signup') }}">Get started</a>
+  </div>
+</div>
+{% endblock %}

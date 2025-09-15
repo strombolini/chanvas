@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <div class="title">Dashboard</div>
+  <div class="col">
+    <form id="scrapeForm" class="col">
+      <div class="row">
+        <div class="col" style="flex:1">
+          <label>Cornell NetID</label>
+          <input name="netid" id="netid" placeholder="abc123" required>
+        </div>
+        <div class="col" style="flex:1">
+          <label>Password</label>
+          <input name="password" id="password" type="password" placeholder="••••••••" required>
+        </div>
+      </div>
+
+      <!-- NEW toggles -->
+      <div class="row mt">
+        <label style="margin-right:16px;">
+          <input type="checkbox" id="interactive" name="interactive">
+          Interactive login (stream & control)
+        </label>
+        <label>
+          <input type="checkbox" id="auto_daily" name="auto_daily">
+          Auto daily scrape (keep session)
+        </label>
+      </div>
+
+      <button class="btn mt" id="startBtn" type="button">Start server-side scrape</button>
+      <p class="mut">A pairing/verification code will appear here when Duo prompts during login.</p>
+
+      <!-- Shown only while the job is waiting for user login -->
+      <div class="mt" id="liveLoginRow" style="display:none;">
+        <a class="btn" id="openLiveLogin" target="_blank" rel="noopener">Open Live Login</a>
+        <span class="mut" style="margin-left:8px;">Complete NetID + Duo in the live window, then this job will continue automatically.</span>
+      </div>
+    </form>
+
+    <div id="statusPanel" class="mt">
+      <div class="chips">
+        <span class="chip">Status: <span id="statusText">idle</span></span>
+        <span class="chip">Duo code: <span id="duoCode">—</span></span>
+      </div>
+      <pre id="logBox" class="mt" style="min-height:120px;">Logs will appear here…</pre>
+    </div>
+
+    <div class="mt">
+      <a class="link" href="{{ url_for('chat') }}">Go to Chat</a>
+    </div>
+
+    <div class="mt">
+      <div class="title" style="font-size:18px">Recent jobs</div>
+      <ul>
+        {% for j in jobs %}
+        <li class="mut">#{{ j.id }} — {{ j.status }} — {{ j.updated_at }}</li>
+        {% endfor %}
+      </ul>
+      {% if not jobs %}
+      <p class="mut">No jobs yet.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+const startBtn = document.getElementById("startBtn");
+const logBox = document.getElementById("logBox");
+const statusText = document.getElementById("statusText");
+const duoCodeEl = document.getElementById("duoCode");
+const liveLoginRow = document.getElementById("liveLoginRow");
+const openLiveLogin = document.getElementById("openLiveLogin");
+let currentJobId = null;
+let pollTimer = null;
+
+function appendLog(msg){
+  logBox.textContent = (logBox.textContent || "") + msg + "\n";
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+async function startScrape(){
+  const netid = document.getElementById("netid").value;
+  const password = document.getElementById("password").value;
+  const interactive = document.getElementById("interactive").checked ? "1" : "0";
+  const auto_daily = document.getElementById("auto_daily").checked ? "1" : "0";
+
+  startBtn.disabled = true;
+  appendLog("[client] starting scrape…");
+
+  // POST form data including toggles via URLSearchParams
+  const resp = await fetch("{{ url_for('start_scrape') }}", {
+    method: "POST",
+    headers: {"Content-Type":"application/x-www-form-urlencoded"},
+    body: new URLSearchParams({ netid, password, interactive, auto_daily })
+  });
+
+  const data = await resp.json();
+  if(!data.ok){
+    appendLog("error: " + (data.error || "failed"));
+    startBtn.disabled = false;
+    return;
+  }
+  currentJobId = data.job_id;
+  statusText.textContent = "queued";
+  duoCodeEl.textContent = "—";
+  liveLoginRow.style.display = "none";
+  pollTimer = setInterval(pollStatus, 1500);
+}
+
+async function pollStatus(){
+  if(!currentJobId){ return; }
+  const resp = await fetch(`{{ url_for('job_status') }}?job_id=${encodeURIComponent(currentJobId)}`, { headers: { "Cache-Control": "no-cache" }});
+  const data = await resp.json();
+  if(!data.ok){
+    appendLog("status error");
+    clearInterval(pollTimer);
+    startBtn.disabled = false;
+    return;
+  }
+  statusText.textContent = data.status || "…";
+  if (data.duo_code) { duoCodeEl.textContent = data.duo_code; }
+  if (data.log) { logBox.textContent = data.log; }
+
+  // When backend signals interactive login state, expose Live Login launcher
+  if (data.status === "waiting_user_login" && currentJobId){
+    liveLoginRow.style.display = "inline-flex";
+    openLiveLogin.href = `/login_control/${encodeURIComponent(currentJobId)}`;
+  } else {
+    liveLoginRow.style.display = "none";
+  }
+
+  if (data.status === "completed" || data.status === "failed"){
+    clearInterval(pollTimer);
+    startBtn.disabled = false;
+    appendLog("[client] job finished: " + data.status);
+  }
+}
+
+startBtn.addEventListener("click", startScrape);
+</script>
+{% endblock %}
