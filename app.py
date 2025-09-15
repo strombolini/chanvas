@@ -1422,7 +1422,7 @@ def dashboard():
   <div id="duo-banner" class="duo-banner">DUO CODE: ------</div>
 </div>
 <div class="card">
-  <h1>Chanvas [We are moving to a different server provider. Stay tuned for auto-scraping and more.]</h1>
+  <h1>Chanvas (Working on new features...)</h1>
   <p>{'✅ Compressed stream is ready for chat.' if stream_ready else '⌛ No compressed stream yet. Start a scrape or test scrape.'}</p>
   <p><a class="btn" href="/chat">Open Chat UI</a></p>
 </div>
@@ -1772,3 +1772,4 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
