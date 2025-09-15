@@ -184,6 +184,52 @@ def _append_scrape_stream_file(path: str, text: str) -> None:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
+# --- Persistent Selenium session/profile (keep Canvas login warm) ------------
+SESSION_ROOT = os.environ.get("SESSION_ROOT", "sessions")
+
+def _session_dir(user_id: int) -> str:
+    base = os.path.abspath(SESSION_ROOT)
+    os.makedirs(base, exist_ok=True)
+    d = os.path.join(base, f"user_{user_id}")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _copytree(src: str, dst: str):
+    # dirs_exist_ok portable copy (Py<3.8 safe)
+    os.makedirs(dst, exist_ok=True)
+    for root, dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        target_root = os.path.join(dst, rel) if rel != "." else dst
+        os.makedirs(target_root, exist_ok=True)
+        for d in dirs:
+            os.makedirs(os.path.join(target_root, d), exist_ok=True)
+        for f in files:
+            sp = os.path.join(root, f)
+            dp = os.path.join(target_root, f)
+            with contextlib.suppress(Exception):
+                shutil.copy2(sp, dp)
+
+def _persist_session(tmp_root: str, dest: str):
+    """
+    Try to persist the logged-in browser profile/cookies from the scraper's tmp_root.
+    We look for common subdirs if present; else we copy tmp_root entirely.
+    """
+    try:
+        if not tmp_root or not os.path.isdir(tmp_root):
+            return
+        candidate = None
+        for name in ("session", "profile", "browser_profile", "selenium_profile", ".profile"):
+            p = os.path.join(tmp_root, name)
+            if os.path.exists(p):
+                candidate = p
+                break
+        src = candidate or tmp_root
+        # refresh destination completely
+        shutil.rmtree(dest, ignore_errors=True)
+        _copytree(src, dest)
+    except Exception as e:
+        log_exception("_persist_session", e)
+
 # File-based job logs (one file per job)
 JOB_LOG_DIR = os.environ.get("JOB_LOG_DIR", "job_logs")
 def _job_log_path(job_id: str) -> str:
@@ -869,7 +915,7 @@ def _has_active_job(db, user_id: int) -> bool:
     ).first()
     return bool(active)
 
-def _enqueue_job_for_user(db, user_id: int, username: str, password: str, headless: bool):
+def _enqueue_job_for_user(db, user_id: int, username: str, password: str, headless: bool, reuse_session_only: bool = False):
     job_id = uuid.uuid4().hex[:16]
     job = Job(id=job_id, user_id=user_id, status="queued", log="",
               created_at=_now_utc(), updated_at=_now_utc())
@@ -878,7 +924,7 @@ def _enqueue_job_for_user(db, user_id: int, username: str, password: str, headle
     def worker():
         _wait_for_job_slot(job_id)
         try:
-            run_scrape_and_index(user_id, username, password, headless, job_id)
+            run_scrape_and_index(user_id, username, password, headless, job_id, reuse_session_only=reuse_session_only)
         finally:
             _release_job_slot()
     t = threading.Thread(target=worker, name=f"auto-{job_id}", daemon=True)
@@ -922,20 +968,24 @@ def _scheduler_loop():
                 if _has_active_job(db, rec.user_id):
                     # leave next_run_at as-is; loop will pick it up soon
                     continue
-                username = (rec.username or "").strip()
-                pw = _decrypt_pw(rec.password_enc or "")
-                if not username or not pw:
-                    _update_job(db, job_id=str(rec.user_id), log_line="Auto-scrape skipped: missing stored credentials")
-                    # push next check 1h later to avoid tight loop
-                    rec.next_run_at = now + datetime.timedelta(hours=1)
+                # Reuse-only autoscrape: never auto-enter credentials
+                sess_dir = _session_dir(rec.user_id)
+                has_session = os.path.isdir(sess_dir) and any(os.scandir(sess_dir))
+                if not has_session:
+                    _update_job(db, job_id=str(rec.user_id), log_line="Autoscrape skipped: no warm session available")
+                    # keep 24h cadence; still schedule next attempt
+                    rec.next_run_at = now + datetime.timedelta(hours=24)
                     rec.updated_at = now
                     db.add(rec); db.commit()
                     continue
-                _enqueue_job_for_user(db, rec.user_id, username, pw, bool(rec.headless))
+                
+                # Enqueue a reuse-only job (blank creds)
+                _enqueue_job_for_user(db, rec.user_id, "", "", bool(rec.headless), reuse_session_only=True)
                 # schedule the *next* run immediately upon queueing
                 rec.next_run_at = now + datetime.timedelta(hours=24)
                 rec.updated_at = now
                 db.add(rec); db.commit()
+
         except Exception as e:
             log_exception("_scheduler_loop", e)
         finally:
@@ -953,7 +1003,7 @@ def _compute_current_term_label(now: Optional[datetime.datetime] = None) -> str:
         return f"Spring {y}"
     return f"Summer {y}"
 
-def run_scrape_and_index(user_id: int, username: str, password: str, headless: bool, job_id: str):
+def run_scrape_and_index(user_id: int, username: str, password: str, headless: bool, job_id: str, reuse_session_only: bool = False):
     db = SessionLocal()
     tmp_root = ""  # ensure defined for finally
     try:
@@ -988,12 +1038,36 @@ def run_scrape_and_index(user_id: int, username: str, password: str, headless: b
             f.write("")  # truncate/create
         os.environ["OCEAN_SCRAPE_STREAM_PATH"] = scrape_path
         _update_job(db, job_id, log_line=f"Live scrape stream file: {scrape_path}")
+        # Point scraper to a persistent per-user session/profile
+        sess_dir = _session_dir(user_id)
+        os.environ["OCEAN_PERSIST_SESSION_DIR"] = sess_dir
+        if reuse_session_only:
+            # Never auto-login in autoscrape: require warm session only
+            os.environ["OCEAN_REUSE_SESSION_ONLY"] = "1"
+        else:
+            with contextlib.suppress(KeyError):
+                del os.environ["OCEAN_REUSE_SESSION_ONLY"]
+        _update_job(db, job_id, log_line=f"Session dir: {sess_dir} (reuse_only={bool(reuse_session_only)})")
 
-        res = run_canvas_scrape_job(username=username, password=password, headless=headless, status_callback=cb)
+
+        call_user = "" if reuse_session_only else username
+        call_pass = "" if reuse_session_only else password
+        res = run_canvas_scrape_job(username=call_user, password=call_pass, headless=headless, status_callback=cb)
+
         input_path = (res or {}).get("input_path") or ""
         tmp_root = (res or {}).get("tmp_root") or ""
         _update_job(db, job_id, log_line=f"Scrape finished. input_path={input_path}")
+        # Save/refresh warm session for next autoscrape
+        try:
+            _persist_session(tmp_root, sess_dir)
+            _update_job(db, job_id, log_line="Session persisted for future reuse")
+        except Exception as _e:
+            log_exception("persist_session", _e)
+
         if not input_path or not os.path.exists(input_path):
+            if reuse_session_only:
+                _update_job(db, job_id, status="skipped", log_line="Autoscrape skipped: session expired / login required (no creds used)")
+                return
             _update_job(db, job_id, status="failed", log_line="input.txt missing; aborting")
             return
         with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -1526,14 +1600,15 @@ def start_job():
         # If user has toggled auto-scrape on, store the latest creds for reuse
         auto = _get_or_create_auto(db, u.id)
         if auto.enabled:
-            auto.username = username
-            auto.password_enc = _encrypt_pw(password)
+            # Reuse-session-only autoscrape: do NOT save passwords
+            auto.username = username or auto.username
+            auto.password_enc = ""  # purge any previously stored cred
             auto.headless = bool(headless)
             auto.updated_at = _now_utc()
-            # If this is the first-ever run with auto enabled, set a provisional next_run_at.
             if not auto.next_run_at:
                 auto.next_run_at = _now_utc() + datetime.timedelta(hours=24)
             db.add(auto); db.commit()
+
 
         def worker():
             # Queue: wait for slot, then run; always release
@@ -1772,4 +1847,5 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
