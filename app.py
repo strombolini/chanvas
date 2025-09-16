@@ -36,7 +36,7 @@ import requests
 # Flask and config
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32))
+app.secret_key = os.environ["SECRET_KEY"]
 # Database (normalize Heroku scheme and force sslmode=require on hosted Postgres)
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///local.db")
 if DATABASE_URL.startswith("postgres://"):
@@ -1854,6 +1854,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
