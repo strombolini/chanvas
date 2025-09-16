@@ -16,7 +16,7 @@ import contextlib
 import tempfile
 import datetime
 from typing import List, Dict, Tuple, Optional
-from flask import Flask, request, redirect, url_for, session, jsonify
+from flask import Flask, request, redirect, url_for, session, jsonify, render_template
 from flask import send_file
 import logging
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -957,6 +957,14 @@ def _resume_interrupted_jobs():
         log_exception("_resume_interrupted_jobs", e)
     finally:
         db.close()
+def _classes_file_path(user_id: int) -> str:
+    """
+    Returns a persistent per-user JSON file storing extracted classes.
+    Uses the system temp dir to avoid repo clutter.
+    """
+    base = os.path.join(tempfile.gettempdir(), "chanvas", f"user-{user_id}")
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, "classes.json")
 
 def _scheduler_loop():
     # Only one scheduler in the formation: prefer web.1 or explicit RUN_SCHEDULER=1
@@ -1121,6 +1129,16 @@ def run_scrape_and_index(user_id: int, username: str, password: str, headless: b
         except Exception as e:
             log_exception("persist_compressed_and_index", e)
             _update_job(db, job_id, log_line="WARNING: Failed to persist compressed corpus to DB")
+                # NEW: Extract classes via gpt-4.1-mini and persist as JSON for the chat UI
+        try:
+            classes = extract_classes_list(compressed_text_final)
+            with open(_classes_file_path(user_id), "w", encoding="utf-8") as f:
+                json.dump(classes, f, ensure_ascii=False, indent=2)
+            _update_job(db, job_id, log_line=f"Detected {len(classes)} course(s); saved classes.json")
+        except Exception as e:
+            log_exception("extract_classes_list", e)
+            _update_job(db, job_id, log_line="WARNING: Failed to extract classes")
+
         
         # If auto-scrape is enabled, schedule the next run in 24h
         try:
@@ -1242,6 +1260,121 @@ def answer_with_context(question: str, context_text: str, prev_user_messages: Op
         "temperature": 0.2,
     }
     return openai_chat(payload)
+def _json_only_guard(text: str):
+    """
+    Extract the first top-level JSON array/object from a model response.
+    Best-effort fallback if the model wraps JSON in prose.
+    """
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    # crude fallback: find first '{' or '[' ... last '}' or ']'
+    start = min([i for i in [text.find('{'), text.find('[')] if i >= 0] or [-1])
+    end_brace = text.rfind('}')
+    end_brack = text.rfind(']')
+    end = max(end_brace, end_brack)
+    if start >= 0 and end > start:
+        try:
+            return json.loads(text[start:end+1])
+        except Exception:
+            return None
+    return None
+
+def extract_classes_list(corpus: str) -> List[str]:
+    """
+    Use gpt-4.1-mini to extract a JSON array of course names/codes.
+    Returns a de-duplicated list of strings.
+    """
+    system = (
+        "You extract course names and/or codes from Canvas-like text. "
+        "Return a JSON array of strings (course titles/codes). Output JSON ONLY."
+    )
+    user = f"Text (may be noisy):\n{corpus[:200_000]}"
+    payload = {
+        "model": "gpt-4.1-mini",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ],
+        "temperature": 0
+    }
+    out = openai_chat(payload) or "[]"
+    obj = _json_only_guard(out) or []
+    if not isinstance(obj, list):
+        return []
+    cleaned = []
+    seen = set()
+    for it in obj:
+        if isinstance(it, str):
+            s = it.strip()
+            key = s.lower()
+            if s and key not in seen:
+                seen.add(key); cleaned.append(s)
+    return cleaned
+
+def generate_flashcards(course: str, corpus: str) -> List[Dict[str, str]]:
+    """
+    Use gpt-4.1 to produce 12 concise flashcards for the given course.
+    Returns a list of {front, back}.
+    """
+    system = "You generate compact study flashcards. Output JSON only."
+    user = f"""Create 12 high-yield flashcards for this course:
+Course: {course}
+
+Return JSON ONLY with this shape:
+{{"flashcards":[{{"front":"...","back":"..."}}, ...]}}
+
+Rules:
+- <= 30 words each side
+- No markdown, no commentary beyond JSON."""
+    payload = {
+        "model": "gpt-4.1",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+            {"role": "user", "content": corpus[:120_000]}
+        ],
+        "temperature": 0.4
+    }
+    out = openai_chat(payload) or "{}"
+    obj = _json_only_guard(out) or {}
+    cards = obj.get("flashcards", []) if isinstance(obj, dict) else []
+    return [c for c in cards if isinstance(c, dict) and "front" in c and "back" in c]
+
+def generate_practice_test(course: str, corpus: str) -> Dict[str, any]:
+    """
+    Use gpt-4.1 to produce 8-12 practice questions with answers at the end.
+    Returns a dict: {"title": "...", "questions":[{"id":1,"question":"...","answer":"..."}]}
+    """
+    system = "You write focused practice tests with answer keys. Output JSON only."
+    user = f"""Create a test for "{course}". JSON ONLY with:
+{{
+  "title": "Practice Test — {course}",
+  "questions": [
+    {{"id":1,"question":"...","answer":"..."}},
+    {{"id":2,"question":"...","answer":"..."}}
+  ]
+}}
+
+Rules:
+- 8–12 self-contained questions
+- No markdown or commentary outside JSON."""
+    payload = {
+        "model": "gpt-4.1",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+            {"role": "user", "content": corpus[:120_000]}
+        ],
+        "temperature": 0.4
+    }
+    out = openai_chat(payload) or "{}"
+    obj = _json_only_guard(out)
+    if isinstance(obj, dict) and "questions" in obj:
+        return obj
+    return {"title": f"Practice Test — {course}", "questions": []}
+
 
 # -----------------------------------------------------------------------------
 # Minimal HTML helpers
@@ -1740,90 +1873,96 @@ def chat():
     db = SessionLocal()
     try:
         u = current_user(db)
-        if request.method == "POST":
-            question = (request.form.get("question") or "").strip()
-            if not question:
-                return ocean_layout("Chat â€¢ Ocean Canvas Assistant", "<div class='card'>Enter a question.</div>")
 
-            # NEW: restore chat history and snapshot it for prev_user_msgs
-            hist = session.get("chat_history", [])
-            if not isinstance(hist, list):
-                hist = []
-            prev_user_msgs = hist[:]  # snapshot BEFORE appending the new question
+        # Load extracted classes (if any)
+        classes: List[str] = []
+        try:
+            with open(_classes_file_path(u.id), "r", encoding="utf-8") as f:
+                obj = json.load(f)
+                if isinstance(obj, list):
+                    classes = [s for s in obj if isinstance(s, str)]
+        except Exception:
+            classes = []
 
-            # Load latest rolling compressed corpus from stream file instead of Document
+        def _load_context_text() -> str:
             last_job = latest_job_for_user(db, u.id)
-            if not last_job:
-                return ocean_layout("Chat • Ocean Canvas Assistant", "<div class='card'>No recent job found. Start a scrape or test scrape.</div>")
-            
-            stream_path = _stream_file_path(u.id, last_job.id)
-            full_context = ""
-            if os.path.exists(stream_path):
-                with open(stream_path, "r", encoding="utf-8", errors="ignore") as f:
-                    full_context = f.read().strip()
-            
-            if not full_context:
-                # Fallback: use the latest DB-backed Document for restart resilience
-                doc_id = latest_document_id(db, u.id)
-                if doc_id:
-                    row = db.query(Document).filter(Document.id == doc_id).first()
-                    full_context = (row.content or "").strip()
-            
-            if not full_context:
-                return ocean_layout("Chat • Ocean Canvas Assistant", "<div class='card'>No compressed context found yet. Start a scrape or test scrape.</div>")
+            if last_job:
+                stream_path = _stream_file_path(u.id, last_job.id)
+                if os.path.exists(stream_path):
+                    with open(stream_path, "r", encoding="utf-8", errors="ignore") as f:
+                        s = f.read().strip()
+                        if s:
+                            return s
+            # fallback to DB-backed Document
+            doc_id = latest_document_id(db, u.id)
+            if doc_id:
+                row = db.query(Document).filter(Document.id == doc_id).first()
+                return (row.content or "").strip()
+            return ""
 
-            # Use the snapshot (last 2 taken inside answer_with_context)
-            answer = answer_with_context(question, full_context, prev_user_messages=prev_user_msgs)
+        # Defaults for template
+        question = ""
+        answer = None
+        chunks = None
+        flashcards = None
+        practice = None
+        selected_course = None
+        gen_mode = None
 
-            # Update session chat history (store only user prompts to keep cookie small)
-            hist.append(question)
-            if len(hist) > 20:
-                hist = hist[-20:]
-            session["chat_history"] = hist
+        if request.method == "POST":
+            # Branch 1: class generation actions
+            selected_course = (request.form.get("gen_course") or "").strip()
+            gen_mode = (request.form.get("gen_mode") or "").strip()
 
-            # Keep typing box open on the answer page
-            body = f"""
-<div class="card">
-  <h2>Answer</h2>
-  <div class="mono" style="white-space:pre-wrap;">{sanitize_db_text(answer)}</div>
-</div>
-<div class="card">
-  <h3>Ask another</h3>
-  <form method="post">
-    <label>Question</label>
-    <textarea name="question" rows="4" placeholder="Ask about course materials..."></textarea>
-    <br><br>
-    <button class="btn" type="submit">Ask</button>
-  </form>
-</div>
-<div class="card">
-  <a class="btn" href="/">Back to dashboard</a>
-</div>
-"""
-            return ocean_layout("Chat â€¢ Ocean Canvas Assistant", body)
+            if selected_course:
+                corpus = _load_context_text()
+                if corpus:
+                    if gen_mode == "practice":
+                        practice = generate_practice_test(selected_course, corpus)
+                    else:
+                        flashcards = generate_flashcards(selected_course, corpus)
+                # Render with generated content (even if empty) below buttons
+                return render_template(
+                    "chat.html",
+                    question="",
+                    answer=None,
+                    chunks=None,
+                    classes=classes,
+                    flashcards=flashcards,
+                    practice=practice,
+                    selected_course=selected_course,
+                    gen_mode=gen_mode
+                )
 
-        # GET
-        last_job = latest_job_for_user(db, u.id)
-        stream_ready = False
-        if last_job:
-            stream_path = _stream_file_path(u.id, last_job.id)
-            stream_ready = os.path.exists(stream_path)
-        body = f"""
-<div class="card">
-  <h2>Chat</h2>
-  <p>{'✅ Compressed stream is ready for chat.' if stream_ready else '⌛ No compressed stream yet. Start a scrape or test scrape.'}</p>
-  <form method="post">
-    <label>Question</label>
-    <textarea name="question" rows="4" placeholder="Ask about course materials..."></textarea>
-    <br><br>
-    <button class="btn" type="submit">Ask</button>
-  </form>
-</div>
-<div class="card">
-  <a class="btn" href="/">Back to dashboard</a>
-</div>
-"""
-        return ocean_layout("Chat â€¢ Ocean Canvas Assistant", body)
+            # Branch 2: normal Q&A
+            question = (request.form.get("question") or "").strip()
+            if question:
+                hist = session.get("chat_history", [])
+                if not isinstance(hist, list):
+                    hist = []
+                prev_user_msgs = hist[:]
+                context_text = _load_context_text()
+                if not context_text:
+                    answer = "No compressed context found yet. Start a scrape or test scrape."
+                else:
+                    answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
+                hist.append(question)
+                if len(hist) > 20:
+                    hist = hist[-20:]
+                session["chat_history"] = hist
+
+        # GET or fall-through
+        return render_template(
+            "chat.html",
+            question=question,
+            answer=answer,
+            chunks=chunks,
+            classes=classes,
+            flashcards=flashcards,
+            practice=practice,
+            selected_course=selected_course,
+            gen_mode=gen_mode
+        )
     finally:
         db.close()
 
@@ -1891,6 +2030,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
