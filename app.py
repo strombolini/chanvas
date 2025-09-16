@@ -357,11 +357,18 @@ def openai_chat(payload: dict, timeout: int = 180) -> str:
             return txt.strip() if txt else "[No content returned]"
         except requests.exceptions.HTTPError as e:
             code = getattr(e.response, "status_code", None)
+            body = ""
+            try:
+                body = e.response.text[:800]
+            except Exception:
+                pass
+            logger.error("OpenAI API HTTP %s: %s", code, body)
             if code in (429, 500, 502, 503, 504):
                 time.sleep(backoff)
                 backoff = min(30.0, backoff * 1.7)
                 continue
             raise
+
         except requests.exceptions.RequestException:
             time.sleep(backoff)
             backoff = min(30.0, backoff * 1.7)
@@ -1847,5 +1854,6 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
