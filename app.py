@@ -1723,6 +1723,13 @@ def chat():
             question = (request.form.get("question") or "").strip()
             if not question:
                 return ocean_layout("Chat â€¢ Ocean Canvas Assistant", "<div class='card'>Enter a question.</div>")
+
+            # NEW: restore chat history and snapshot it for prev_user_msgs
+            hist = session.get("chat_history", [])
+            if not isinstance(hist, list):
+                hist = []
+            prev_user_msgs = hist[:]  # snapshot BEFORE appending the new question
+
             # Load latest rolling compressed corpus from stream file instead of Document
             last_job = latest_job_for_user(db, u.id)
             if not last_job:
@@ -1744,12 +1751,15 @@ def chat():
             if not full_context:
                 return ocean_layout("Chat • Ocean Canvas Assistant", "<div class='card'>No compressed context found yet. Start a scrape or test scrape.</div>")
 
+            # Use the snapshot (last 2 taken inside answer_with_context)
             answer = answer_with_context(question, full_context, prev_user_messages=prev_user_msgs)
+
             # Update session chat history (store only user prompts to keep cookie small)
             hist.append(question)
             if len(hist) > 20:
                 hist = hist[-20:]
             session["chat_history"] = hist
+
             # Keep typing box open on the answer page
             body = f"""
 <div class="card">
@@ -1770,7 +1780,8 @@ def chat():
 </div>
 """
             return ocean_layout("Chat â€¢ Ocean Canvas Assistant", body)
-                # GET
+
+        # GET
         last_job = latest_job_for_user(db, u.id)
         stream_ready = False
         if last_job:
@@ -1794,6 +1805,7 @@ def chat():
         return ocean_layout("Chat â€¢ Ocean Canvas Assistant", body)
     finally:
         db.close()
+
 # -----------------------------------------------------------------------------
 # Live Duo endpoint for newest job (JSON for polling)
 # -----------------------------------------------------------------------------
@@ -1858,6 +1870,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
