@@ -1290,7 +1290,7 @@ def extract_classes_list(corpus: str) -> List[str]:
     Returns a de-duplicated list of strings.
     """
     system = (
-        "You extract course names and/or codes from Canvas-like text. "
+        "You extract course names from Canvas-like text. Courses that are very similar (i.e. GOVT 1111 COMBINED-XLIST Introduction to American Government and Politics (2025FA) as the first course and GOVT 1111 - Introduction to American Government and Politics as the second course should be grouped into the same course. Find ALL courses the user is taking."
         "Return a JSON array of strings (course titles/codes). Output JSON ONLY."
     )
     user = f"Text (may be noisy):\n{corpus[:200_000]}"
@@ -2049,6 +2049,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
