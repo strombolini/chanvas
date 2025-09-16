@@ -1123,13 +1123,16 @@ def run_scrape_and_index(user_id: int, username: str, password: str, headless: b
         except Exception:
             compressed_text_final = raw_for_compress  # best-effort
         
-        try:
-            doc_id = persist_compressed_and_index(db, user_id, job_id, compressed_text_final)
-            _update_job(db, job_id, log_line=f"Persisted compressed corpus to Document {doc_id} (DB-backed)")
-        except Exception as e:
-            log_exception("persist_compressed_and_index", e)
-            _update_job(db, job_id, log_line="WARNING: Failed to persist compressed corpus to DB")
                 # NEW: Extract classes via gpt-4.1-mini and persist as JSON for the chat UI
+        try:
+            classes = extract_classes_list(compressed_text_final)
+            with open(_classes_file_path(user_id), "w", encoding="utf-8") as f:
+                json.dump(classes, f, ensure_ascii=False, indent=2)
+            _update_job(db, job_id, log_line=f"Detected {len(classes)} course(s); saved classes.json")
+        except Exception as e:
+            log_exception("extract_classes_list", e)
+            _update_job(db, job_id, log_line="WARNING: Failed to extract classes")
+
         try:
             classes = extract_classes_list(compressed_text_final)
             with open(_classes_file_path(user_id), "w", encoding="utf-8") as f:
@@ -1874,16 +1877,6 @@ def chat():
     try:
         u = current_user(db)
 
-        # Load extracted classes (if any)
-        classes: List[str] = []
-        try:
-            with open(_classes_file_path(u.id), "r", encoding="utf-8") as f:
-                obj = json.load(f)
-                if isinstance(obj, list):
-                    classes = [s for s in obj if isinstance(s, str)]
-        except Exception:
-            classes = []
-
         def _load_context_text() -> str:
             last_job = latest_job_for_user(db, u.id)
             if last_job:
@@ -1900,6 +1893,32 @@ def chat():
                 return (row.content or "").strip()
             return ""
 
+        # 1) Load saved classes.json (if present)
+        classes: List[str] = []
+        try:
+            with open(_classes_file_path(u.id), "r", encoding="utf-8") as f:
+                obj = json.load(f)
+                if isinstance(obj, list):
+                    classes = [s for s in obj if isinstance(s, str)]
+        except Exception:
+            classes = []
+
+        # 2) Fallback: if no classes yet, attempt on-demand extraction from current corpus
+        if not classes:
+            try:
+                _corpus = _load_context_text()
+                if _corpus:
+                    classes = extract_classes_list(_corpus)
+                    if classes:
+                        with open(_classes_file_path(u.id), "w", encoding="utf-8") as f:
+                            json.dump(classes, f, ensure_ascii=False, indent=2)
+                        # optional: log success to help debugging
+                        last_job = latest_job_for_user(db, u.id)
+                        if last_job:
+                            _update_job(db, last_job.id, log_line=f"On-demand: detected {len(classes)} class(es) for chat UI")
+            except Exception as _e:
+                log_exception("chat_on_demand_class_extract", _e)
+
         # Defaults for template
         question = ""
         answer = None
@@ -1910,7 +1929,7 @@ def chat():
         gen_mode = None
 
         if request.method == "POST":
-            # Branch 1: class generation actions
+            # Generation buttons submit
             selected_course = (request.form.get("gen_course") or "").strip()
             gen_mode = (request.form.get("gen_mode") or "").strip()
 
@@ -1921,7 +1940,6 @@ def chat():
                         practice = generate_practice_test(selected_course, corpus)
                     else:
                         flashcards = generate_flashcards(selected_course, corpus)
-                # Render with generated content (even if empty) below buttons
                 return render_template(
                     "chat.html",
                     question="",
@@ -1934,7 +1952,7 @@ def chat():
                     gen_mode=gen_mode
                 )
 
-            # Branch 2: normal Q&A
+            # Normal Q&A flow
             question = (request.form.get("question") or "").strip()
             if question:
                 hist = session.get("chat_history", [])
@@ -1951,7 +1969,7 @@ def chat():
                     hist = hist[-20:]
                 session["chat_history"] = hist
 
-        # GET or fall-through
+        # GET (or fallthrough)
         return render_template(
             "chat.html",
             question=question,
@@ -2030,6 +2048,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
