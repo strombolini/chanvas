@@ -18,6 +18,7 @@ import datetime
 from typing import List, Dict, Tuple, Optional
 from flask import Flask, request, redirect, url_for, session, jsonify
 from flask import send_file
+import logging
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import create_engine, text as sql_text
 from sqlalchemy.orm import sessionmaker, scoped_session
@@ -37,6 +38,7 @@ import requests
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
+
 # Database (normalize Heroku scheme and force sslmode=require on hosted Postgres)
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///local.db")
 if DATABASE_URL.startswith("postgres://"):
@@ -54,7 +56,9 @@ try:
     JSONB = _JSONB
 except Exception:
     from sqlalchemy.types import JSON as JSONB
-
+gunicorn_error_logger = logging.getLogger("gunicorn.error")
+app.logger.handlers = gunicorn_error_logger.handlers
+app.logger.setLevel(gunicorn_error_logger.level)
 class AutoScrape(Base):
     __tablename__ = "auto_scrapes"
     id = Column(String(32), primary_key=True)           # uuid hex for record
@@ -1854,6 +1858,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
