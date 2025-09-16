@@ -9,12 +9,59 @@
     </div>
     <button class="btn mt" type="submit">Ask</button>
   </form>
+
+  {# --- INSERT A: Classes UI (buttons + mode) directly under the chat form --- #}
+  {% if classes %}
+  <div class="mt">
+    <div class="title" style="font-size:18px">Your classes</div>
+
+    <div class="mt" style="display:flex;align-items:center;gap:10px;">
+      <label for="gen_mode" class="mut">Generate:</label>
+      <select id="gen_mode">
+        <option value="flashcards" {% if gen_mode == 'flashcards' %}selected{% endif %}>Flashcards</option>
+        <option value="practice" {% if gen_mode == 'practice' %}selected{% endif %}>Practice problems</option>
+      </select>
+    </div>
+
+    <div class="mt" id="class-buttons" style="display:flex;flex-wrap:wrap;gap:8px;">
+      {% for c in classes %}
+        <button class="btn class-btn" data-course="{{ c|e }}" type="button">{{ c }}</button>
+      {% endfor %}
+    </div>
+
+    <form id="gen-form" method="post" class="hidden">
+      <input type="hidden" name="gen_course" id="gen_course" />
+      <input type="hidden" name="gen_mode" id="gen_mode_input" />
+    </form>
+
+    <script>
+    (function() {
+      const btns = document.querySelectorAll('.class-btn');
+      const form = document.getElementById('gen-form');
+      const courseInput = document.getElementById('gen_course');
+      const modeSelect = document.getElementById('gen_mode');
+      const modeInput = document.getElementById('gen_mode_input');
+      btns.forEach(b => {
+        b.addEventListener('click', function(ev) {
+          ev.preventDefault();
+          courseInput.value = this.dataset.course;
+          modeInput.value = modeSelect.value;
+          form.submit();
+        });
+      });
+    })();
+    </script>
+  </div>
+  {% endif %}
+  {# --- END INSERT A --- #}
+
   {% if answer is not none %}
   <div class="mt">
     <div class="title" style="font-size:18px">Answer</div>
     <pre>{{ answer }}</pre>
   </div>
   {% endif %}
+
   {% if chunks %}
   <div class="mt">
     <div class="title" style="font-size:18px">Top snippets used</div>
@@ -25,5 +72,57 @@
     </ul>
   </div>
   {% endif %}
+
+  {# --- INSERT B: Flashcards render --- #}
+  {% if flashcards %}
+  <div class="mt">
+    <div class="title" style="font-size:18px">Flashcards — {{ selected_course }}</div>
+    <div id="fc" class="card" style="text-align:center; cursor:pointer; min-height:140px; display:flex; align-items:center; justify-content:center;">
+      <div id="fc-text"></div>
+    </div>
+    <div class="mut" style="margin-top:6px;">Click to flip; click again to advance.</div>
+  </div>
+  <script>
+  (function(){
+    const cards = {{ flashcards|tojson }};
+    let i = 0, showBack = false;
+    const box = document.getElementById('fc');
+    const text = document.getElementById('fc-text');
+    function render() {
+      if (!cards || i >= cards.length) { text.textContent = "Done! 🎉"; return; }
+      const c = cards[i] || {};
+      text.textContent = showBack ? (c.back || "") : (c.front || "");
+    }
+    box?.addEventListener('click', function() {
+      if (!cards || i >= cards.length) return;
+      if (!showBack) showBack = true; else { showBack = false; i += 1; }
+      render();
+    });
+    render();
+  })();
+  </script>
+  {% endif %}
+  {# --- END INSERT B --- #}
+
+  {# --- INSERT C: Practice test render (questions + answer key) --- #}
+  {% if practice %}
+  <div class="mt">
+    <div class="title" style="font-size:18px">{{ practice.title or ("Practice Test — " ~ (selected_course or "")) }}</div>
+    <ol>
+      {% for q in practice.questions %}
+        <li style="margin-bottom:10px;">{{ q.question }}</li>
+      {% endfor %}
+    </ol>
+    <div class="mt">
+      <div class="title" style="font-size:18px">Answer key</div>
+      <ol>
+        {% for q in practice.questions %}
+          <li class="mut">{{ q.answer }}</li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+  {% endif %}
+  {# --- END INSERT C --- #}
 </div>
 {% endblock %}
