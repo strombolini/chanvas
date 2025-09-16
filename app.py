@@ -1266,6 +1266,23 @@ def ocean_layout(title: str, body_html: str) -> str:
 <meta charset="utf-8">
 <title>{title}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+<!-- MathJax v3 config + loader -->
+<script>
+window.MathJax = {{
+  tex: {{
+    inlineMath: [['\\\\(','\\\\)'], ['$', '$']],
+    displayMath: [['\\\\[','\\\\]'], ['$$','$$']],
+    processEscapes: true
+  }},
+  options: {{
+    skipHtmlTags: ['script','noscript','style','textarea','pre','code']
+  }}
+}};
+</script>
+<script id="MathJax-script" async
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
 <style>
 :root {{
   --ocean-bg1:#031a26;
@@ -1289,10 +1306,10 @@ body {{
     linear-gradient(180deg, var(--ocean-bg1) 0%, var(--ocean-bg2) 45%, var(--ocean-bg3) 100%);
   background-attachment: fixed, fixed, fixed;
 }}
- a {{ color:var(--ocean-accent); text-decoration:none; }}
- a:hover {{ text-decoration:underline; }}
- .container {{ max-width: 980px; margin: 0 auto; padding: 28px; }}
- .card {{
+a {{ color:var(--ocean-accent); text-decoration:none; }}
+a:hover {{ text-decoration:underline; }}
+.container {{ max-width: 980px; margin: 0 auto; padding: 28px; }}
+.card {{
   background: var(--glass);
   border: 1px solid var(--ocean-border);
   border-radius: 14px;
@@ -1302,7 +1319,7 @@ body {{
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }}
- .btn {{
+.btn {{
   display: inline-block;
   color: #fff;
   padding: 11px 16px;
@@ -1312,16 +1329,16 @@ body {{
   box-shadow: 0 8px 16px rgba(16, 136, 178, 0.35), inset 0 1px 0 rgba(255,255,255,0.12);
   transition: transform .12s ease, box-shadow .12s ease, filter .12s ease, background .12s ease;
 }}
- .btn:hover {{
+.btn:hover {{
   transform: translateY(-1px);
   box-shadow: 0 12px 22px rgba(16, 136, 178, 0.45), inset 0 1px 0 rgba(255,255,255,0.18);
   filter: brightness(1.04);
 }}
- .btn:active {{
+.btn:active {{
   transform: translateY(0);
   box-shadow: 0 6px 12px rgba(16,136,178,0.30);
 }}
- input, textarea {{
+input, textarea {{
   width: 100%;
   padding: 11px 12px;
   border-radius: 10px;
@@ -1331,17 +1348,17 @@ body {{
   outline: none;
   transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
 }}
- input::placeholder, textarea::placeholder {{ color: var(--ocean-muted); }}
- input:focus, textarea:focus {{
+input::placeholder, textarea::placeholder {{ color: var(--ocean-muted); }}
+input:focus, textarea:focus {{
   border-color: var(--ocean-accent);
   box-shadow: 0 0 0 3px rgba(57,193,255,0.15);
   background: rgba(3,22,34,0.75);
 }}
- table {{ width:100%; border-collapse:collapse; }}
- th, td {{ text-align:left; padding:10px 8px; border-bottom:1px solid var(--ocean-border); vertical-align:top; }}
- tbody tr:nth-child(even) {{ background: rgba(255,255,255,0.02); }}
- .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
- .badge {{
+table {{ width:100%; border-collapse:collapse; }}
+th, td {{ text-align:left; padding:10px 8px; border-bottom:1px solid var(--ocean-border); vertical-align:top; }}
+tbody tr:nth-child(even) {{ background: rgba(255,255,255,0.02); }}
+.mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+.badge {{
   display:inline-block;
   padding:6px 10px;
   font-size:12px;
@@ -1350,8 +1367,8 @@ body {{
   border:1px solid rgba(255,255,255,0.12);
   background: linear-gradient(180deg, rgba(23,56,75,0.75) 0%, rgba(15,42,58,0.65) 100%);
 }}
- .duo {{ font-size:18px; font-weight:700; color:#ffe066; }}
- .duo-banner {{
+.duo {{ font-size:18px; font-weight:700; color:#ffe066; }}
+.duo-banner {{
   font-size: 32px;
   font-weight: 900;
   color: #ffe066;
@@ -1362,16 +1379,19 @@ body {{
   text-align: center;
   letter-spacing: 1px;
 }}
- h1, h2, h3 {{ margin: 6px 0 14px; }}
- </style>
- </head>
- <body>
- <div class="container">
- {body_html}
- </div>
- </body>
- </html>
- """.strip()
+h1, h2, h3 {{ margin: 6px 0 14px; }}
+
+/* Optional: make MathJax text inherit your color scheme a bit better */
+.MathJax, .mjx-chtml {{ color: var(--ocean-ink); }}
+</style>
+</head>
+<body>
+  <div class="container">
+    {body_html}
+  </div>
+</body>
+</html>
+""".strip()
 # -----------------------------------------------------------------------------
 # Auth routes
 # -----------------------------------------------------------------------------
@@ -1871,6 +1891,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
