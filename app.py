@@ -153,7 +153,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY is not set; API calls will fail.")
 # Switched default chat model to gpt-4o (course chat)
-CHAT_MODEL = os.environ.get("CHAT_MODEL", "gpt-4.1")
+CHAT_MODEL = os.environ.get("CHAT_MODEL", "gpt-4.1-mini")
 COMPRESSION_MODEL = os.environ.get("COMPRESSION_MODEL", os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"))
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
 # Context budgeting aligned to local scripts
@@ -1244,25 +1244,40 @@ def retrieve_context(db, doc_id: str, question: str, top_k: int, token_budget: i
 # 3) Modify answer_with_context() to inject the timestamp
 def answer_with_context(question: str, context_text: str, prev_user_messages: Optional[List[str]] = None) -> str:
     now_local = _ithaca_now_str()
-    system = (
-        "You are a helpful assistant that answers questions based on provided course materials. "
-        "Be concise and cite from the provided context when relevant. "
-        f"Current local time in Ithaca, NY: {now_local}"
-    )
-    messages = [{"role": "system", "content": system}]
-    # Add last 2 prior user messages to provide conversational context
+    prev_blob = ""
     if prev_user_messages:
-        for m in prev_user_messages[-2:]:
-            if isinstance(m, str) and m.strip():
-                messages.append({"role": "user", "content": f"Earlier question for context: {m.strip()}"})
-    user_prompt = f"Question: {question}\n\nRelevant course materials:\n{context_text}"
-    messages.append({"role": "user", "content": user_prompt})
+        # only last 2, formatted as context (NOT separate user turns)
+        items = [m.strip() for m in prev_user_messages[-2:] if isinstance(m, str) and m.strip()]
+        if items:
+            prev_blob = "\n".join(f"- {x}" for x in items)
+
+    system = (
+        "You answer ONLY the final question provided, using the given course materials. "
+        "Treat any earlier user questions as CONTEXT ONLY; do not answer them. "
+        "Be concise; include citations or quotes from materials when helpful. "
+        f"Current local time in Ithaca, NY: {now_local}\n\n"
+        + (f"Context-only (do NOT answer these):\n{prev_blob}\n" if prev_blob else "")
+        + "When multiple questions appear, answer ONLY the one under '=== QUESTION ==='."
+    )
+
+    user_prompt = (
+        "=== QUESTION ===\n"
+        f"{question}\n\n"
+        "=== MATERIALS ===\n"
+        f"{context_text}"
+    )
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_prompt},
+    ]
     payload = {
         "model": CHAT_MODEL,
         "messages": messages,
         "temperature": 0.2,
     }
     return openai_chat(payload)
+
 def _json_only_guard(text: str):
     """
     Extract the first top-level JSON array/object from a model response.
@@ -2049,6 +2064,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
