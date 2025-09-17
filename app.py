@@ -1488,11 +1488,12 @@ window.MathJax = {{
     displayMath: [['\\\\[','\\\\]'], ['$$','$$']],
     processEscapes: true
   }},
-  options: {{
-    skipHtmlTags: ['script','noscript','style','textarea'],
+    options: {
+    skipHtmlTags: ['script','noscript','style','textarea','pre','code'],
     processHtmlClass: 'mathjax-target',
     ignoreHtmlClass: 'tex2jax_ignore'
-  }}
+  }
+
 }};
 </script>
 <script id="MathJax-script" async
@@ -2009,7 +2010,62 @@ def chat():
 
         if request.method == "POST":
             # Generation buttons submit
+            selected_course = (request.form.get("gen_course") or "").strip()
+            gen_mode = (request.form.get("gen_mode") or "").strip()
 
+            if selected_course:
+                corpus = _load_context_text()
+                if corpus:
+                    if gen_mode == "practice":
+                        practice = generate_practice_test(selected_course, corpus)
+                    else:
+                        flashcards = generate_flashcards(selected_course, corpus)
+
+                inner = render_template(
+                    "chat.html",
+                    question="",
+                    answer=None,
+                    chunks=None,
+                    classes=classes,
+                    flashcards=flashcards,
+                    practice=practice,
+                    selected_course=selected_course,
+                    gen_mode=gen_mode
+                )
+                return ocean_layout("Chat • Ocean Canvas Assistant", f"<div class='mathjax-target'>{inner}</div>")
+
+            # Normal Q&A flow
+            question = (request.form.get("question") or "").strip()
+            if question:
+                hist = session.get("chat_history", [])
+                if not isinstance(hist, list):
+                    hist = []
+                prev_user_msgs = hist[:]
+                context_text = _load_context_text()
+                if not context_text:
+                    answer = "No compressed context found yet. Start a scrape or test scrape."
+                else:
+                    answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
+                hist.append(question)
+                if len(hist) > 20:
+                    hist = hist[-20:]
+                session["chat_history"] = hist
+
+        # GET (or fallthrough)
+        inner = render_template(
+            "chat.html",
+            question=question,
+            answer=answer,
+            chunks=chunks,
+            classes=classes,
+            flashcards=flashcards,
+            practice=practice,
+            selected_course=selected_course,
+            gen_mode=gen_mode
+        )
+        return ocean_layout("Chat • Ocean Canvas Assistant", f"<div class='mathjax-target'>{inner}</div>")
+    finally:
+        db.close()
 
 
 # -----------------------------------------------------------------------------
@@ -2076,7 +2132,3 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
-
-
-
-
