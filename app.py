@@ -1482,22 +1482,19 @@ def ocean_layout(title: str, body_html: str) -> str:
 
 <!-- MathJax v3 config + loader -->
 <script>
-window.MathJax = {
-  tex: {
-    inlineMath: [['\\(','\\)'], ['$', '$']],
-    displayMath: [['\\[','\\]'], ['$$','$$']],
+window.MathJax = {{
+  tex: {{
+    inlineMath: [['\\\\(','\\\\)'], ['$', '$']],
+    displayMath: [['\\\\[','\\\\]'], ['$$','$$']],
     processEscapes: true
-  },
-  options: {
-    // Keep the usual skips, but allow processing in our chat content.
+  }},
+  options: {{
     skipHtmlTags: ['script','noscript','style','textarea'],
-    // Only process elements having this class (or their children)
     processHtmlClass: 'mathjax-target',
-    ignoreHtmlClass: 'tex2jax_ignore'  // standard ignore hook if ever needed
-  }
-};
+    ignoreHtmlClass: 'tex2jax_ignore'
+  }}
+}};
 </script>
-
 <script id="MathJax-script" async
   src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 
@@ -1605,11 +1602,12 @@ h1, h2, h3 {{ margin: 6px 0 14px; }}
 </head>
 <body>
   <div class="container">
-    {body_html}
+    {{body_html}}
   </div>
 </body>
 </html>
-""".strip()
+""".replace("{{body_html}}", body_html).strip()
+
 # -----------------------------------------------------------------------------
 # Auth routes
 # -----------------------------------------------------------------------------
