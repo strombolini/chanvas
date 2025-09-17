@@ -1283,10 +1283,10 @@ def answer_with_context(question: str, context_text: str, prev_user_messages: Op
 
 
 def _json_only_guard(text: str):
-    """
+    r"""
     Try to parse JSON. If it fails, extract the first JSON object/array and
     repair LaTeX-style backslashes (e.g., \Delta, \(, \]) by doubling them,
-    while preserving valid JSON escapes like \n, \t, \uXXXX, \\ and \/.
+    while preserving valid JSON escapes like \n, \t, \\uXXXX, \\ and \\/.
     """
     try:
         return json.loads(text)
