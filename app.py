@@ -1371,7 +1371,7 @@ def generate_practice_test(course: str, corpus: str) -> Dict[str, any]:
     Returns a dict: {"title": "...", "questions":[{"id":1,"question":"...","answer":"..."}]}
     """
     system = (
-    "You write focused practice tests with answer keys. Output JSON only. Don't cover syllabus information, focus on the class content itself, with a focus on recent content, but be comprehensive."
+    "You write focused practice tests with answer keys. Output JSON only. Don't cover syllabus information, focus on the class content itself, with a focus on recent content, but be comprehensive.\n"
     "Math formatting rules (MANDATORY):\n"
         "• Use LaTeX delimiters: inline math with \\( ... \\), display math with \\[ ... \\].\n"
         "• Do NOT use Unicode subscripts/superscripts (e.g., T₀). Write T_{0}, S^{*}, etc.\n"
@@ -2077,6 +2077,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
