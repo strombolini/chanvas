@@ -1489,8 +1489,10 @@ window.MathJax = {{
     processEscapes: true
   }},
   options: {{
-    skipHtmlTags: ['script','noscript','style','textarea','pre','code'],
+    // Only process elements with this class:
     processHtmlClass: 'mathjax-target',
+    // Ignore things like code/pre automatically:
+    skipHtmlTags: ['script','noscript','style','textarea','pre','code'],
     ignoreHtmlClass: 'tex2jax_ignore'
   }}
 }};
@@ -1601,8 +1603,8 @@ h1, h2, h3 {{ margin: 6px 0 14px; }}
 </style>
 </head>
 <body>
-  <div class="container">
-    {{body_html}}
+  <div class="container mathjax-target">
+    {body_html}
   </div>
 
   <script>
@@ -1614,7 +1616,8 @@ h1, h2, h3 {{ margin: 6px 0 14px; }}
   </script>
 </body>
 </html>
-""".replace("{{body_html}}", body_html).strip()
+""".strip()
+
 
 # -----------------------------------------------------------------------------
 # Auth routes
