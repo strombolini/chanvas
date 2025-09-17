@@ -58,7 +58,7 @@
   {% if answer is not none %}
   <div class="mt">
     <div class="title" style="font-size:18px">Answer</div>
-    <pre>{{ answer }}</pre>
+    <div id="answer" class="mono" style="white-space:pre-wrap;">{{ answer }}</div>
   </div>
   {% endif %}
 
@@ -126,3 +126,4 @@
   {# --- END INSERT C --- #}
 </div>
 {% endblock %}
+
