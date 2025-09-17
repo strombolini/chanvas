@@ -1378,6 +1378,52 @@ def extract_classes_list(corpus: str) -> List[str]:
             if s and key not in seen:
                 seen.add(key); cleaned.append(s)
     return cleaned
+def generate_practice_test(course: str, corpus: str) -> Dict[str, any]:
+    system = (
+        "You write focused practice tests with answer keys. Output JSON only. "
+        "Don't cover syllabus information; focus on class content (prefer recent). "
+        "Math formatting rules (MANDATORY): "
+        "Use LaTeX delimiters (\\( ... \\), \\[ ... \\]); no Unicode super/subscripts; "
+        "use \\ln, \\exp, \\Delta, etc."
+    )
+
+    # Put instructions + context into one user message to reduce drift
+    user = f"""Create a test for "{course}".
+
+Return JSON ONLY with exactly this shape:
+{{
+  "title": "Practice Test — {course}",
+  "questions": [
+    {{"id":1,"question":"...","answer":"..."}},
+    {{"id":2,"question":"...","answer":"..."}}
+  ]
+}}
+
+Rules:
+- 8–12 self-contained questions
+- No markdown or commentary outside JSON.
+
+CONTEXT:
+{corpus[:120_000]}
+"""
+
+    payload = {
+        "model": "gpt-4.1",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ],
+        "temperature": 0.4,
+        # Give the model room and force JSON
+        "max_tokens": 3000,
+        "response_format": {"type": "json_object"}
+    }
+
+    out = openai_chat(payload) or "{}"
+    obj = _json_only_guard(out)
+    if isinstance(obj, dict) and "questions" in obj:
+        return obj
+    return {"title": f"Practice Test — {course}", "questions": []}
 
 def generate_flashcards(course: str, corpus: str) -> List[Dict[str, str]]:
     system = "You generate compact study flashcards. Output JSON only."
