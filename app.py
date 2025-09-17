@@ -1284,24 +1284,68 @@ def answer_with_context(question: str, context_text: str, prev_user_messages: Op
 
 def _json_only_guard(text: str):
     """
-    Extract the first top-level JSON array/object from a model response.
-    Best-effort fallback if the model wraps JSON in prose.
+    Try to parse JSON. If it fails, extract the first JSON object/array and
+    repair LaTeX-style backslashes (e.g., \Delta, \(, \]) by doubling them,
+    while preserving valid JSON escapes like \n, \t, \uXXXX, \\ and \/.
     """
     try:
         return json.loads(text)
     except Exception:
         pass
-    # crude fallback: find first '{' or '[' ... last '}' or ']'
-    start = min([i for i in [text.find('{'), text.find('[')] if i >= 0] or [-1])
-    end_brace = text.rfind('}')
-    end_brack = text.rfind(']')
-    end = max(end_brace, end_brack)
-    if start >= 0 and end > start:
-        try:
-            return json.loads(text[start:end+1])
-        except Exception:
-            return None
-    return None
+
+    # find a likely JSON blob
+    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+    if not starts:
+        return None
+    start = min(starts)
+    end = max(text.rfind("}"), text.rfind("]"))
+    if end <= start:
+        return None
+    candidate = text[start:end+1]
+
+    # first retry
+    try:
+        return json.loads(candidate)
+    except Exception:
+        pass
+
+    # repair phase: double non-JSON backslashes inside strings
+    def _repair_backslashes(s: str) -> str:
+        out = []
+        in_str = False
+        esc = False
+        quote = ""
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if not in_str:
+                if ch in ('"', "'"):
+                    in_str = True
+                    quote = ch
+                out.append(ch); i += 1; continue
+            # inside string
+            if esc:
+                out.append(ch); esc = False; i += 1; continue
+            if ch == "\\":
+                # peek next char
+                nxt = s[i+1] if i+1 < len(s) else ""
+                if nxt in ['"', "\\", "/", "b", "f", "n", "r", "t", "u"]:
+                    # valid JSON escape, keep as is; mark escaped
+                    out.append("\\"); esc = True; i += 1; continue
+                # otherwise likely LaTeX (\alpha, \(, \], etc.) -> double it
+                out.append("\\\\"); i += 1; continue
+            if ch == quote:
+                in_str = False; quote = ""
+                out.append(ch); i += 1; continue
+            out.append(ch); i += 1
+        return "".join(out)
+
+    repaired = _repair_backslashes(candidate)
+    try:
+        return json.loads(repaired)
+    except Exception:
+        return None
+
 
 def extract_classes_list(corpus: str) -> List[str]:
     """
@@ -2035,3 +2079,4 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
