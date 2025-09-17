@@ -1488,12 +1488,11 @@ window.MathJax = {{
     displayMath: [['\\\\[','\\\\]'], ['$$','$$']],
     processEscapes: true
   }},
-    options: {
+  options: {{
     skipHtmlTags: ['script','noscript','style','textarea','pre','code'],
     processHtmlClass: 'mathjax-target',
     ignoreHtmlClass: 'tex2jax_ignore'
-  }
-
+  }}
 }};
 </script>
 <script id="MathJax-script" async
@@ -1605,6 +1604,14 @@ h1, h2, h3 {{ margin: 6px 0 14px; }}
   <div class="container">
     {{body_html}}
   </div>
+
+  <script>
+  document.addEventListener('DOMContentLoaded', function () {{
+    if (window.MathJax && MathJax.typesetPromise) {{
+      MathJax.typesetPromise();
+    }}
+  }});
+  </script>
 </body>
 </html>
 """.replace("{{body_html}}", body_html).strip()
@@ -2132,3 +2139,8 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
+
+
+
+
