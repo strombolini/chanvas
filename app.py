@@ -1336,10 +1336,6 @@ def extract_classes_list(corpus: str) -> List[str]:
     return cleaned
 
 def generate_flashcards(course: str, corpus: str) -> List[Dict[str, str]]:
-    """
-    Use gpt-4.1 to produce 12 concise flashcards for the given course. 
-    Returns a list of {front, back}.
-    """
     system = "You generate compact study flashcards. Output JSON only."
     user = f"""Create 12 high-yield flashcards for this course:
 Course: {course}
@@ -1350,62 +1346,24 @@ Return JSON ONLY with this shape:
 Rules:
 - <= 30 words each side
 - No markdown, no commentary beyond JSON.
-- Don't cover syllabus information, focus on the class content itself, with a focus on recent content, but be comprehensive."""
+
+CONTEXT:
+{corpus[:120_000]}
+"""
     payload = {
         "model": "gpt-4.1",
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": user},
-            {"role": "user", "content": corpus[:120_000]}
+            {"role": "user", "content": user}
         ],
-        "temperature": 0.4
+        "temperature": 0.4,
+        "max_tokens": 1800,
+        "response_format": {"type": "json_object"}
     }
     out = openai_chat(payload) or "{}"
     obj = _json_only_guard(out) or {}
     cards = obj.get("flashcards", []) if isinstance(obj, dict) else []
     return [c for c in cards if isinstance(c, dict) and "front" in c and "back" in c]
-
-def generate_practice_test(course: str, corpus: str) -> Dict[str, any]:
-    """
-    Use gpt-4.1 to produce 8-12 practice questions with answers at the end.
-    Returns a dict: {"title": "...", "questions":[{"id":1,"question":"...","answer":"..."}]}
-    """
-    system = (
-    "You write focused practice tests with answer keys. Output JSON only. Don't cover syllabus information, focus on the class content itself, with a focus on recent content, but be comprehensive.\n"
-    "Math formatting rules (MANDATORY):\n"
-    "• Use LaTeX delimiters: inline math with \\( ... \\), display math with \\[ ... \\].\n"
-    "• Do NOT use Unicode subscripts/superscripts (e.g., T₀). Write T_{0}, S^{*}, etc.\n"
-    "• Use \\ln, \\exp, \\Delta, etc. Avoid plain 'ln', 'Δ' if they appear in math.\n"
-    "• Keep units and symbols inside math where appropriate.\n"
-    )
-
-
-    user = f"""Create a test for "{course}". JSON ONLY with:
-{{
-  "title": "Practice Test — {course}",
-  "questions": [
-    {{"id":1,"question":"...","answer":"..."}},
-    {{"id":2,"question":"...","answer":"..."}}
-  ]
-}}
-
-Rules:
-- 8–12 self-contained questions
-- No markdown or commentary outside JSON."""
-    payload = {
-        "model": "gpt-4.1",
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-            {"role": "user", "content": corpus[:120_000]}
-        ],
-        "temperature": 0.4
-    }
-    out = openai_chat(payload) or "{}"
-    obj = _json_only_guard(out)
-    if isinstance(obj, dict) and "questions" in obj:
-        return obj
-    return {"title": f"Practice Test — {course}", "questions": []}
 
 
 # -----------------------------------------------------------------------------
@@ -2077,21 +2035,3 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
