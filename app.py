@@ -1246,18 +1246,21 @@ def answer_with_context(question: str, context_text: str, prev_user_messages: Op
     now_local = _ithaca_now_str()
     prev_blob = ""
     if prev_user_messages:
-        # only last 2, formatted as context (NOT separate user turns)
         items = [m.strip() for m in prev_user_messages[-2:] if isinstance(m, str) and m.strip()]
         if items:
             prev_blob = "\n".join(f"- {x}" for x in items)
 
     system = (
-        "You answer ONLY the final question provided, using the given course materials. "
-        "Treat any earlier user questions as CONTEXT ONLY; do not answer them. "
-        "Be concise; include citations or quotes from materials when helpful. "
+        "You answer ONLY the final question using the provided course materials.\n"
+        "Math formatting rules (MANDATORY):\n"
+        "• Use LaTeX delimiters: inline math with \\( ... \\), display math with \\[ ... \\].\n"
+        "• Do NOT use Unicode subscripts/superscripts (e.g., T₀). Write T_{0}, S^{*}, etc.\n"
+        "• Use \\ln, \\exp, \\Delta, etc. Avoid plain 'ln', 'Δ' if they appear in math.\n"
+        "• Keep units and symbols inside math where appropriate.\n"
+        "Treat any earlier user questions as context only; do not answer them.\n"
         f"Current local time in Ithaca, NY: {now_local}\n\n"
         + (f"Context-only (do NOT answer these):\n{prev_blob}\n" if prev_blob else "")
-        + "When multiple questions appear, answer ONLY the one under '=== QUESTION ==='."
+        + "Answer ONLY the text under '=== QUESTION ==='."
     )
 
     user_prompt = (
@@ -1277,6 +1280,7 @@ def answer_with_context(question: str, context_text: str, prev_user_messages: Op
         "temperature": 0.2,
     }
     return openai_chat(payload)
+
 
 def _json_only_guard(text: str):
     """
@@ -2064,6 +2068,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
