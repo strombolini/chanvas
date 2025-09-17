@@ -2060,13 +2060,13 @@ def chat():
         )
     finally:
         db.close()
-html = render_template(
-    "chat_inner.html",  # rename your current chat.html to chat_inner.html
-    question=question, answer=answer, chunks=chunks,
-    classes=classes, flashcards=flashcards, practice=practice,
-    selected_course=selected_course, gen_mode=gen_mode
-)
-return ocean_layout("Chat • Ocean Canvas Assistant", html)
+    html = render_template(
+        "chat_inner.html",  # rename your current chat.html to chat_inner.html
+        question=question, answer=answer, chunks=chunks,
+        classes=classes, flashcards=flashcards, practice=practice,
+        selected_course=selected_course, gen_mode=gen_mode
+    )
+    return ocean_layout("Chat • Ocean Canvas Assistant", html)
 
 
 # -----------------------------------------------------------------------------
@@ -2133,5 +2133,6 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
