@@ -1,5 +1,0 @@
-.env.local
-local.db
-server_errors.log
-venv/
-__pycache__/
