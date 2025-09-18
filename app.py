@@ -2,6 +2,10 @@
 import os
 import signal
 from zoneinfo import ZoneInfo  # stdlib IANA time zone support
+from dotenv import load_dotenv
+
+# Load environment variables from .env.local
+load_dotenv(".env.local")
 
 import re
 import json
@@ -176,85 +180,6 @@ def _stream_file_path(user_id: int, job_id: str) -> str:
     return os.path.join(out_dir, f"stream_{user_id}_{job_id}.txt")
 # Live scrape stream (distinct from logs and compressed stream)
 SCRAPE_STREAM_DIR = os.environ.get("SCRAPE_STREAM_DIR", "scrape_stream")
-# --- Canvas login bridge (reverse proxy) --------------------------------------
-CANVAS_ORIGIN = "https://canvas.cornell.edu"
-BRIDGE_TIMEOUT_SECONDS = int(os.environ.get("BRIDGE_TIMEOUT_SECONDS", "30"))
-BRIDGE_STORE_DIR = os.path.abspath(os.environ.get("BRIDGE_STORE_DIR", os.path.join(tempfile.gettempdir(), "chanvas_bridge")))
-os.makedirs(BRIDGE_STORE_DIR, exist_ok=True)
-
-def _bridge_cookie_path(job_id: str) -> str:
-    return os.path.join(BRIDGE_STORE_DIR, f"cookies_{job_id}.json")
-
-def _bridge_save_session(job_id: str, session_cookies) -> None:
-    try:
-        lst = []
-        for c in session_cookies:
-            lst.append({
-                "name": c.name,
-                "value": c.value,
-                "domain": c.domain or "canvas.cornell.edu",
-                "path": c.path or "/",
-                "secure": bool(getattr(c, "secure", False)),
-                "expires": c.expires if hasattr(c, "expires") else None,
-            })
-        with open(_bridge_cookie_path(job_id), "w", encoding="utf-8") as f:
-            json.dump(lst, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log_exception("_bridge_save_session", e)
-
-def _bridge_load_session(job_id: str):
-    import requests
-    s = requests.Session()
-    try:
-        p = _bridge_cookie_path(job_id)
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as f:
-                lst = json.load(f)
-            jar = requests.cookies.RequestsCookieJar()
-            for c in lst:
-                jar.set(
-                    c.get("name",""),
-                    c.get("value",""),
-                    domain=c.get("domain") or "canvas.cornell.edu",
-                    path=c.get("path") or "/",
-                    secure=c.get("secure") or False,
-                    expires=c.get("expires")
-                )
-            s.cookies = jar
-    except Exception as e:
-        log_exception("_bridge_load_session", e)
-    return s
-
-def _bridge_export_cookies_for_selenium(job_id: str) -> List[Dict[str, str]]:
-    try:
-        p = _bridge_cookie_path(job_id)
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception as e:
-        log_exception("_bridge_export_cookies_for_selenium", e)
-    return []
-
-def _rewrite_location_to_bridge(loc: str, job_id: str) -> str:
-    try:
-        if not loc:
-            return loc
-        if loc.startswith("http://") or loc.startswith("https://"):
-            # Absolute Cornell → bridge path
-            if loc.startswith(CANVAS_ORIGIN):
-                return url_for("bridge", job_id=job_id, proxypath=loc[len(CANVAS_ORIGIN):].lstrip("/"))
-            return loc
-        # Relative
-        return url_for("bridge", job_id=job_id, proxypath=loc.lstrip("/"))
-    except Exception:
-        return loc
-
-def _rewrite_html(html: str, job_id: str) -> str:
-    # very light-touch URL rewriting for href/src/action starting with / or with full CANVAS_ORIGIN
-    html = re.sub(r'((?:href|src|action)=["\'])/', r'\1' + f"/bridge/{job_id}/", html)
-    html = html.replace(CANVAS_ORIGIN + "/", f"/bridge/{job_id}/")
-    return html
-
 
 def _scrape_stream_file_path(user_id: int, job_id: str) -> str:
     out_dir = os.path.abspath(SCRAPE_STREAM_DIR)
@@ -1101,8 +1026,7 @@ def _compute_current_term_label(now: Optional[datetime.datetime] = None) -> str:
         return f"Spring {y}"
     return f"Summer {y}"
 
-def run_scrape_and_index(user_id: int, username: str, password: str, headless: bool, job_id: str, reuse_session_only: bool = False, initial_cookies: Optional[List[Dict[str, str]]] = None):
-
+def run_scrape_and_index(user_id: int, username: str, password: str, headless: bool, job_id: str, reuse_session_only: bool = False):
     db = SessionLocal()
     tmp_root = ""  # ensure defined for finally
     try:
@@ -1151,14 +1075,7 @@ def run_scrape_and_index(user_id: int, username: str, password: str, headless: b
 
         call_user = "" if reuse_session_only else username
         call_pass = "" if reuse_session_only else password
-        res = run_canvas_scrape_job(
-            username=call_user,
-            password=call_pass,
-            headless=headless,
-            status_callback=cb,
-            initial_cookies=initial_cookies
-        )
-
+        res = run_canvas_scrape_job(username=call_user, password=call_pass, headless=headless, status_callback=cb)
 
         input_path = (res or {}).get("input_path") or ""
         tmp_root = (res or {}).get("tmp_root") or ""
@@ -1220,6 +1137,14 @@ def run_scrape_and_index(user_id: int, username: str, password: str, headless: b
             log_exception("extract_classes_list", e)
             _update_job(db, job_id, log_line="WARNING: Failed to extract classes")
 
+        try:
+            classes = extract_classes_list(compressed_text_final)
+            with open(_classes_file_path(user_id), "w", encoding="utf-8") as f:
+                json.dump(classes, f, ensure_ascii=False, indent=2)
+            _update_job(db, job_id, log_line=f"Detected {len(classes)} course(s); saved classes.json")
+        except Exception as e:
+            log_exception("extract_classes_list", e)
+            _update_job(db, job_id, log_line="WARNING: Failed to extract classes")
 
         
         # If auto-scrape is enabled, schedule the next run in 24h
@@ -1841,14 +1766,17 @@ def dashboard():
 {auto_card}
 <div class="card">
   <h3>Start Canvas scrape</h3>
-  <form method="post" action="/start_login">
-    <label><input type="checkbox" name="headless" checked /> Headless after handoff</label>
+  <form method="post" action="/start_job">
+    <label>Cornell NetID</label>
+    <input name="username" placeholder="netid" />
+    <label>Password</label>
+    <input name="password" type="password" />
+    <label><input type="checkbox" name="headless" checked /> Headless</label>
     <br><br>
-    <button class="btn" type="submit">Begin Login & Handoff</button>
+    <button class="btn" type="submit">Start Job</button>
   </form>
-  <p><em>You’ll log in on the official Cornell page (proxied here) and complete Duo yourself. After ~{BRIDGE_TIMEOUT_SECONDS}s, control is disabled and the scraper continues automatically.</em></p>
+  <p><em>Once login begins, a Duo code may appear here as DUO CODE: ######.</em></p>
 </div>
-
 <div class="card">
   <h3>Test Scrape</h3>
   <form method="post" action="/start_test">
@@ -1890,186 +1818,6 @@ def _append_job_log(db, job: Job, kind: str, message: str):
     job.updated_at = datetime.datetime.utcnow()
     db.add(job)
     db.commit()
-
-# -----------------------------------------------------------------------------
-# Live login bridge: user sees Cornell login via our reverse-proxy, we store cookies
-# Then we "handoff" to Selenium after BRIDGE_TIMEOUT_SECONDS by disabling input.
-# -----------------------------------------------------------------------------
-@app.route("/start_login", methods=["POST"])
-@login_required
-def start_login():
-    db = SessionLocal()
-    try:
-        u = current_user(db)
-        headless = True if request.form.get("headless") else False
-        job_id = uuid.uuid4().hex[:16]
-        job = Job(
-            id=job_id,
-            user_id=u.id,
-            status="logging_in",
-            log="",
-            created_at=datetime.datetime.utcnow(),
-            updated_at=datetime.datetime.utcnow(),
-        )
-        db.add(job); db.commit()
-        return redirect(url_for("login_live", job_id=job_id, headless=("1" if headless else "0")))
-    finally:
-        db.close()
-
-@app.route("/login_live/<job_id>")
-@login_required
-def login_live(job_id):
-    db = SessionLocal()
-    try:
-        u = current_user(db)
-        job = db.query(Job).filter(Job.id==job_id, Job.user_id==u.id).first()
-        if not job:
-            return ocean_layout("Login", "<div class='card'>Job not found.</div>"), 404
-        headless = request.args.get("headless","1")
-        # Wrapper shows the proxied Canvas in an iframe for BRIDGE_TIMEOUT_SECONDS, then disables pointer events and posts /bridge_done
-        body = f"""
-<div class="card">
-  <h2>Canvas Login (Live)</h2>
-  <p>Enter your Cornell NetID &amp; password, and complete Duo. This window will hand off to the scraper in <span id="secs">{BRIDGE_TIMEOUT_SECONDS}</span>s.</p>
-  <div style="position:relative;height:70vh;border:1px solid var(--ocean-border);border-radius:12px;overflow:hidden;">
-    <iframe id="bridge" src="/bridge/{job_id}/login/saml" style="width:100%;height:100%;border:0;"></iframe>
-    <div id="overlay" style="display:none;position:absolute;inset:0;background:rgba(3,26,38,.55);backdrop-filter:blur(2px);align-items:center;justify-content:center;">
-      <div class="card" style="max-width:520px;text-align:center;margin:0 auto;">
-        <h3>Handoff in progress…</h3>
-        <p>We’re transferring your logged-in session to Selenium and starting the scrape.</p>
-        <p><a class="btn" href="/job/{job_id}">Go to Job</a></p>
-      </div>
-    </div>
-  </div>
-</div>
-<script>
-(function(){{
-  var s={BRIDGE_TIMEOUT_SECONDS};
-  var el=document.getElementById('secs');
-  var ov=document.getElementById('overlay');
-  var t=setInterval(function(){{
-    s--; if(el) el.textContent=s;
-    if(s<=0) {{
-      clearInterval(t);
-      // lock inputs
-      if(ov) ov.style.display='flex';
-      fetch('/bridge_done/{job_id}?headless={headless}', {{method:'POST'}}).then(function(){{
-        setTimeout(function(){{ window.location = '/job/{job_id}'; }}, 1200);
-      }});
-    }}
-  }}, 1000);
-}})();
-</script>
-"""
-        return ocean_layout("Live Login • Ocean Canvas Assistant", body)
-    finally:
-        db.close()
-
-@app.route("/bridge_done/<job_id>", methods=["POST"])
-@login_required
-def bridge_done(job_id):
-    db = SessionLocal()
-    try:
-        u = current_user(db)
-        job = db.query(Job).filter(Job.id==job_id, Job.user_id==u.id).first()
-        if not job:
-            return jsonify({"ok": False}), 404
-        headless = request.args.get("headless","1") == "1"
-        # Export cookies to pass into Selenium
-        cookies = _bridge_export_cookies_for_selenium(job_id)
-
-        def worker():
-            _wait_for_job_slot(job_id)
-            try:
-                # Reuse-only with cookies (no credential entry)
-                run_scrape_and_index(
-                    user_id=u.id,
-                    username="",
-                    password="",
-                    headless=headless,
-                    job_id=job_id,
-                    reuse_session_only=True,
-                    initial_cookies=cookies
-                )
-            finally:
-                _release_job_slot()
-        t = threading.Thread(target=worker, name=f"bridge-{job_id}", daemon=True)
-        t.start()
-        return jsonify({"ok": True})
-    finally:
-        db.close()
-@app.route("/bridge/<job_id>/", defaults={"proxypath": ""}, methods=["GET","POST"])
-@app.route("/bridge/<job_id>/<path:proxypath>", methods=["GET","POST"])
-@login_required
-def bridge(job_id, proxypath):
-    db = SessionLocal()
-    try:
-        u = current_user(db)
-        job = db.query(Job).filter(Job.id==job_id, Job.user_id==u.id).first()
-        if not job:
-            return "Not found", 404
-    finally:
-        db.close()
-
-    # Build target URL
-    target = urljoin(CANVAS_ORIGIN + "/", proxypath or "")
-    sess = _bridge_load_session(job_id)
-
-    # Forward request
-    headers = {}
-    for k, v in request.headers.items():
-        kl = k.lower()
-        if kl in ("host", "content-length", "accept-encoding", "connection"):
-            continue
-        headers[k] = v
-    data = request.get_data()
-    params = request.args
-
-    try:
-        resp = sess.request(
-            method=request.method,
-            url=target,
-            headers=headers,
-            params=params,
-            data=data if request.method != "GET" else None,
-            allow_redirects=False,
-            timeout=60,
-        )
-    except Exception as e:
-        return f"Upstream error: {e}", 502
-
-    # Persist cookies
-    _bridge_save_session(job_id, sess.cookies)
-
-    # Prepare response
-    status = resp.status_code
-    content = resp.content
-    content_type = resp.headers.get("Content-Type", "")
-
-    # Rewrite HTML so relative links hit our /bridge/<job_id>/ prefix
-    if "text/html" in (content_type or "").lower():
-        try:
-            html = resp.text
-            html = _rewrite_html(html, job_id)
-            content = html.encode(resp.encoding or "utf-8", errors="ignore")
-        except Exception:
-            pass
-
-    # Rewrite redirects to stay under /bridge
-    headers_out = []
-    for k, v in resp.headers.items():
-        kl = k.lower()
-        if kl in ("content-length", "content-encoding", "transfer-encoding", "connection", "set-cookie"):
-            continue
-        if kl == "location":
-            v = _rewrite_location_to_bridge(v, job_id)
-        if kl in ("x-frame-options", "content-security-policy"):
-            # Strip restrictive headers so we can iframe in /login_live
-            continue
-        headers_out.append((k, v))
-
-    return content, status, headers_out
-
 @app.route("/auto_toggle", methods=["POST"])
 @login_required
 def auto_toggle():
@@ -2089,6 +1837,41 @@ def auto_toggle():
         return redirect(url_for("dashboard"))
     finally:
         db.close()
+
+@app.route("/start_job", methods=["POST"])
+@login_required
+def start_job():
+    db = SessionLocal()
+    try:
+        u = current_user(db)
+        username = (request.form.get("username") or "").strip()
+        password = (request.form.get("password") or "")
+        headless = True if request.form.get("headless") else False
+        if not username or not password:
+            return ocean_layout("Start Job", "<div class='card'>NetID and password required.</div>"), 400
+        job_id = uuid.uuid4().hex[:16]
+        job = Job(
+            id=job_id,
+            user_id=u.id,
+            status="queued",
+            log="",
+            created_at=datetime.datetime.utcnow(),
+            updated_at=datetime.datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        # If user has toggled auto-scrape on, store the latest creds for reuse
+        auto = _get_or_create_auto(db, u.id)
+        if auto.enabled:
+            # Reuse-session-only autoscrape: do NOT save passwords
+            auto.username = username or auto.username
+            auto.password_enc = ""  # purge any previously stored cred
+            auto.headless = bool(headless)
+            auto.updated_at = _now_utc()
+            if not auto.next_run_at:
+                auto.next_run_at = _now_utc() + datetime.timedelta(hours=24)
+            db.add(auto); db.commit()
+
 
         def worker():
             # Queue: wait for slot, then run; always release
@@ -2131,8 +1914,6 @@ def start_test():
         return redirect(url_for("dashboard"))
     finally:
         db.close()
-
-
 @app.route("/job/<job_id>", methods=["GET"])
 @login_required
 def job_detail(job_id):
@@ -2365,9 +2146,3 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
-
-
-
-
-
-
