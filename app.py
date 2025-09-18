@@ -2106,12 +2106,6 @@ def latest_duo():
         return jsonify({"job_id": job.id, "duo_code": duo, "status": job.status or ""}), 200
     finally:
         db.close()
-        if not job:
-            return jsonify({"job_id": "", "duo_code": "", "status": ""}), 200
-        duo = (job.duo_code or "").strip()
-        return jsonify({"job_id": job.id, "duo_code": duo, "status": job.status or ""}), 200
-    finally:
-        db.close()
 # Replace job_state() with file-backed log reading
 @app.route("/job_state/<job_id>", methods=["GET"])
 @login_required
@@ -2166,5 +2160,6 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
