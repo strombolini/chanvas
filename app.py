@@ -2,11 +2,6 @@
 import os
 import signal
 from zoneinfo import ZoneInfo  # stdlib IANA time zone support
-from dotenv import load_dotenv
-
-# Load environment variables from .env.local
-load_dotenv(".env.local")
-
 import re
 import json
 import uuid
@@ -2146,3 +2141,4 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
