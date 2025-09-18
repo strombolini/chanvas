@@ -2,10 +2,6 @@
 import os
 import signal
 from zoneinfo import ZoneInfo  # stdlib IANA time zone support
-from dotenv import load_dotenv
-
-# Load environment variables from .env.local
-load_dotenv(".env.local")
 
 import re
 import json
