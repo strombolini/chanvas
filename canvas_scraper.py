@@ -44,6 +44,7 @@ MAX_FILE_CHARS = int(os.environ.get("MAX_FILE_CHARS", "200000"))  # per file wri
 REUSE_SESSION_ONLY = os.environ.get("OCEAN_REUSE_SESSION_ONLY", "0") == "1"
 PERSIST_SESSION_DIR = os.environ.get("OCEAN_PERSIST_SESSION_DIR", "")
 CHROME_PROFILE_DIR = os.environ.get("OCEAN_CHROME_PROFILE_DIR", "Default")
+BRIDGE_COOKIES_PATH = os.environ.get("OCEAN_BRIDGE_COOKIES_PATH", "")
 
 
 
@@ -238,6 +239,30 @@ def normalize_link(href, course_id: str) -> str:
         return ""
 
     return url
+def _apply_initial_cookies(driver, cookies: List[Dict]) -> None:
+    if not cookies:
+        return
+    try:
+        driver.get(START_URL)
+        for c in cookies:
+            try:
+                cookie = {
+                    "name": c.get("name"),
+                    "value": c.get("value"),
+                    "path": c.get("path") or "/",
+                    "domain": c.get("domain") or "canvas.cornell.edu",
+                }
+                if c.get("secure") is not None:
+                    cookie["secure"] = bool(c.get("secure"))
+                if c.get("expires") is not None:
+                    cookie["expiry"] = int(c.get("expires"))
+                driver.add_cookie(cookie)
+            except Exception:
+                pass
+        # Reload with cookies in place
+        driver.get(START_URL)
+    except Exception:
+        pass
 
 def session_looks_logged_in(driver) -> bool:
     """
@@ -891,8 +916,8 @@ def run_course_crawl(driver, course_id: str, input_txt_path: Path, status_callba
     crawl_course(driver, course_id, input_txt_path, status_callback)
 
 
-def run_canvas_scrape_job(username: str, password: str, headless: bool, status_callback: Callable[[str, str], None]) -> Dict:
-    """
+def run_canvas_scrape_job(username: str, password: str, headless: bool, status_callback: Callable[[str, str], None], initial_cookies: Optional[List[Dict]] = None) -> Dict:
+
     Run a complete Canvas scrape job and return the aggregated input file path and temp root for later cleanup.
     """
     tmp_root = Path(tempfile.mkdtemp(prefix="canvas_job_"))
@@ -906,6 +931,20 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
             status_callback("status", "checking_session")
 
         logged_in = session_looks_logged_in(driver)
+            # If we were given cookies from the bridge (user logged in), apply them now
+        if not logged_in:
+            if initial_cookies and isinstance(initial_cookies, list):
+                _apply_initial_cookies(driver, initial_cookies)
+                logged_in = session_looks_logged_in(driver)
+            elif BRIDGE_COOKIES_PATH and os.path.exists(BRIDGE_COOKIES_PATH):
+                try:
+                    with open(BRIDGE_COOKIES_PATH, "r", encoding="utf-8") as f:
+                        lst = json.load(f)
+                    if isinstance(lst, list):
+                        _apply_initial_cookies(driver, lst)
+                        logged_in = session_looks_logged_in(driver)
+                except Exception:
+                    pass
 
         if not logged_in:
             if REUSE_SESSION_ONLY or not (username and password):
@@ -950,5 +989,6 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
             driver.quit()
 
     # Do NOT delete tmp_root here; app.py will clean up after embedding
+
 
 
