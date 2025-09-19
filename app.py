@@ -81,7 +81,18 @@ class AutoScrape(Base):
 Base.metadata.create_all(engine)
 
 def _fernet_key_from_secret(secret: bytes) -> bytes:
-    """Derive a 32-byte urlsafe base64 key from app.secret_key or OPENAI key."""
+    """
+    Derive a 32-byte URL-safe base64 encryption key from a secret.
+
+    Uses SHA-256 to hash the input secret and encodes it as base64 for use
+    with Fernet symmetric encryption. Falls back to a default secret if none provided.
+
+    Args:
+        secret (bytes): The secret bytes to derive the key from
+
+    Returns:
+        bytes: A 32-byte URL-safe base64 encoded encryption key
+    """
     raw = hashlib.sha256(secret or b"default-secret").digest()
     return base64.urlsafe_b64encode(raw)
 
@@ -94,6 +105,19 @@ except Exception:
     _FERNET = None
 
 def _encrypt_pw(s: str) -> str:
+    """
+    Encrypt a password string for secure storage.
+
+    Uses Fernet symmetric encryption when available (prefixed with 'v1:'),
+    falls back to base64 encoding (prefixed with 'b64:') for basic obfuscation.
+
+    Args:
+        s (str): The password string to encrypt
+
+    Returns:
+        str: Encrypted password with version prefix ('v1:' or 'b64:')
+             Returns empty string if input is empty
+    """
     if not s:
         return ""
     try:
@@ -105,6 +129,18 @@ def _encrypt_pw(s: str) -> str:
     return "b64:" + base64.b64encode(s.encode("utf-8")).decode("utf-8")
 
 def _decrypt_pw(s: str) -> str:
+    """
+    Decrypt a password that was encrypted with _encrypt_pw().
+
+    Handles both Fernet encryption ('v1:' prefix) and base64 fallback ('b64:' prefix).
+    Returns empty string on any decryption failure for security.
+
+    Args:
+        s (str): The encrypted password string with version prefix
+
+    Returns:
+        str: Decrypted password, or empty string if decryption fails
+    """
     if not s:
         return ""
     try:
@@ -127,22 +163,68 @@ if not logger.handlers:
     fh.setFormatter(fmt)
     logger.addHandler(fh)
 def log_exception(where: str, exc: Exception):
+    """
+    Log an exception with full traceback information.
+
+    Captures the current traceback and logs both the exception details
+    and the location where it occurred for debugging purposes.
+
+    Args:
+        where (str): Description of where the exception occurred
+        exc (Exception): The exception object that was caught
+    """
     tb = traceback.format_exc()
     logger.error("Exception at %s: %r\n%s", where, exc, tb)
 @app.teardown_appcontext
 def remove_session(exception=None):
     SessionLocal.remove()
 def sanitize_db_text(s: str) -> str:
+    """
+    Remove problematic control characters from text before database insertion.
+
+    Removes null bytes and other control characters that can cause database
+    errors or corruption. Preserves newlines and tabs.
+
+    Args:
+        s (str): The text string to sanitize
+
+    Returns:
+        str: Sanitized string safe for database storage
+    """
     if not s:
         return s
     s = s.replace("\x00", "")
     return re.sub(r"[\x01-\x08\x0B\x0C\x0E-\x1F]", "", s)
 def current_user(db):
+    """
+    Get the currently logged-in user from the Flask session.
+
+    Retrieves the user ID from the Flask session and queries the database
+    to return the corresponding User object.
+
+    Args:
+        db: SQLAlchemy database session
+
+    Returns:
+        User: The current user object, or None if no user is logged in
+    """
     uid = session.get("user_id")
     if not uid:
         return None
     return db.query(User).filter(User.id == uid).first()
 def login_required(fn):
+    """
+    Decorator that requires user authentication to access a Flask route.
+
+    Checks if a user_id exists in the Flask session. If not, redirects
+    to the login page. Otherwise, allows the decorated function to execute.
+
+    Args:
+        fn: The Flask route function to protect
+
+    Returns:
+        function: Wrapped function that enforces authentication
+    """
     import functools
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -175,6 +257,19 @@ SUMMARIZE_CHUNK_TOKENS = int(os.environ.get("SUMMARIZE_CHUNK_TOKENS", "110000"))
 SUMMARIZE_MAX_OUTPUT_TOKENS = int(os.environ.get("SUMMARIZE_MAX_OUTPUT_TOKENS", "16000"))
 STREAM_OUT_DIR = os.environ.get("STREAM_OUT_DIR", "stream_out")
 def _stream_file_path(user_id: int, job_id: str) -> str:
+    """
+    Generate the file path for storing streaming output from a job.
+
+    Creates the output directory if it doesn't exist and returns a unique
+    file path based on the user ID and job ID.
+
+    Args:
+        user_id (int): The ID of the user running the job
+        job_id (str): The unique job identifier
+
+    Returns:
+        str: Full path to the stream output file
+    """
     out_dir = os.path.abspath(STREAM_OUT_DIR)
     os.makedirs(out_dir, exist_ok=True)
     return os.path.join(out_dir, f"stream_{user_id}_{job_id}.txt")
@@ -182,11 +277,34 @@ def _stream_file_path(user_id: int, job_id: str) -> str:
 SCRAPE_STREAM_DIR = os.environ.get("SCRAPE_STREAM_DIR", "scrape_stream")
 
 def _scrape_stream_file_path(user_id: int, job_id: str) -> str:
+    """
+    Generate the file path for storing live scraping progress output.
+
+    Creates a separate directory for scrape streams (distinct from job logs)
+    and returns a unique file path for real-time scraping updates.
+
+    Args:
+        user_id (int): The ID of the user running the scrape
+        job_id (str): The unique job identifier
+
+    Returns:
+        str: Full path to the scrape stream file
+    """
     out_dir = os.path.abspath(SCRAPE_STREAM_DIR)
     os.makedirs(out_dir, exist_ok=True)
     return os.path.join(out_dir, f"scrape_{user_id}_{job_id}.txt")
 
 def _append_scrape_stream_file(path: str, text: str) -> None:
+    """
+    Append text to a scrape stream file with immediate disk flush.
+
+    Ensures data is immediately written to disk for durability during
+    long-running scrape operations. Uses line buffering and force flush.
+
+    Args:
+        path (str): Path to the stream file
+        text (str): Text content to append
+    """
     # Durable append for long-running scrapes
     with open(path, "a", encoding="utf-8", buffering=1) as f:
         f.write(text)
@@ -196,6 +314,18 @@ def _append_scrape_stream_file(path: str, text: str) -> None:
 SESSION_ROOT = os.environ.get("SESSION_ROOT", "sessions")
 
 def _session_dir(user_id: int) -> str:
+    """
+    Get the directory path for storing a user's persistent browser session.
+
+    Creates the session root directory and user-specific subdirectory
+    if they don't exist. Used for maintaining Canvas login state.
+
+    Args:
+        user_id (int): The user's unique identifier
+
+    Returns:
+        str: Path to the user's session directory
+    """
     base = os.path.abspath(SESSION_ROOT)
     os.makedirs(base, exist_ok=True)
     d = os.path.join(base, f"user_{user_id}")
@@ -203,6 +333,17 @@ def _session_dir(user_id: int) -> str:
     return d
 
 def _copytree(src: str, dst: str):
+    """
+    Recursively copy a directory tree with Python <3.8 compatibility.
+
+    A custom implementation of shutil.copytree that works with older Python
+    versions. Creates destination directories and copies all files, preserving
+    metadata when possible.
+
+    Args:
+        src (str): Source directory path
+        dst (str): Destination directory path
+    """
     # dirs_exist_ok portable copy (Py<3.8 safe)
     os.makedirs(dst, exist_ok=True)
     for root, dirs, files in os.walk(src):
@@ -241,10 +382,33 @@ def _persist_session(tmp_root: str, dest: str):
 # File-based job logs (one file per job)
 JOB_LOG_DIR = os.environ.get("JOB_LOG_DIR", "job_logs")
 def _job_log_path(job_id: str) -> str:
+    """
+    Generate the file path for a job's log file.
+
+    Creates the job log directory if it doesn't exist and returns
+    the path for the specific job's log file.
+
+    Args:
+        job_id (str): The unique job identifier
+
+    Returns:
+        str: Full path to the job's log file
+    """
     out_dir = os.path.abspath(JOB_LOG_DIR)
     os.makedirs(out_dir, exist_ok=True)
     return os.path.join(out_dir, f"job_{job_id}.log")
+
 def _append_job_log_file(job_id: str, message: str):
+    """
+    Append a timestamped message to a job's log file.
+
+    Adds a UTC timestamp prefix to the message and appends it to
+    the job's log file for debugging and monitoring purposes.
+
+    Args:
+        job_id (str): The unique job identifier
+        message (str): The log message to append
+    """
     ts = datetime.datetime.utcnow().strftime("%H:%M:%S")
     line = f"{ts} {message}\n"
     with open(_job_log_path(job_id), "a", encoding="utf-8") as f:
@@ -253,6 +417,18 @@ def _append_job_log_file(job_id: str, message: str):
 # Token helpers (ported from local)
 # -----------------------------------------------------------------------------
 def get_encoder(model: str):
+    """
+    Get the appropriate tokenizer encoder for a given model.
+
+    Attempts to get the model-specific encoder, falling back to standard
+    encoders if the model is not recognized. Returns None if tiktoken is unavailable.
+
+    Args:
+        model (str): The model name (e.g., 'gpt-4', 'gpt-3.5-turbo')
+
+    Returns:
+        tiktoken.Encoding or None: The tokenizer encoder, or None if unavailable
+    """
     if tiktoken is None:
         return None
     try:
@@ -263,6 +439,19 @@ def get_encoder(model: str):
         except Exception:
             return tiktoken.get_encoding("cl100k_base")
 def estimate_tokens(text: str, model: str) -> int:
+    """
+    Estimate the number of tokens in a text string for a given model.
+
+    Uses tiktoken when available for accurate token counting. Falls back
+    to character-based estimation (4 chars ≈ 1 token) when tiktoken is unavailable.
+
+    Args:
+        text (str): The text to count tokens for
+        model (str): The model name for tokenizer selection
+
+    Returns:
+        int: Estimated number of tokens (minimum 1)
+    """
     enc = get_encoder(model)
     if enc is None:
         return max(1, len(text) // 4)
@@ -271,6 +460,19 @@ def estimate_tokens(text: str, model: str) -> int:
     except Exception:
         return max(1, len(text) // 4)
 def encode_text(text: str, model: str):
+    """
+    Encode text into tokens using the appropriate tokenizer.
+
+    Returns both the encoded tokens and the encoder object. Falls back
+    to character-based chunking when tiktoken is unavailable.
+
+    Args:
+        text (str): The text to encode
+        model (str): The model name for tokenizer selection
+
+    Returns:
+        tuple: (tokens, encoder) where tokens is a list and encoder is the tokenizer
+    """
     enc = get_encoder(model)
     if enc is None:
         # fallback: 4 chars ≈ 1 token slices
@@ -281,10 +483,37 @@ def encode_text(text: str, model: str):
         return toks, enc
     return enc.encode(text), enc
 def decode_tokens(tokens, enc):
+    """
+    Decode tokens back into text using the provided encoder.
+
+    Handles both tiktoken encoders and fallback character-based tokens.
+
+    Args:
+        tokens: List of tokens to decode
+        enc: The encoder object (or None for fallback)
+
+    Returns:
+        str: The decoded text string
+    """
     if enc is None:
         return "".join(tokens)
     return enc.decode(tokens)
 def truncate_to_tokens(text: str, max_tokens: int, model: str) -> str:
+    """
+    Truncate text to fit within a maximum token limit.
+
+    Uses binary search to efficiently find the longest prefix of the text
+    that stays within the token limit. Returns the original text if it's
+    already within the limit.
+
+    Args:
+        text (str): The text to truncate
+        max_tokens (int): Maximum number of tokens allowed
+        model (str): The model name for tokenizer selection
+
+    Returns:
+        str: Truncated text that fits within the token limit
+    """
     if estimate_tokens(text, model) <= max_tokens:
         return text
     lo, hi = 0, len(text)
@@ -303,6 +532,18 @@ def truncate_to_tokens(text: str, max_tokens: int, model: str) -> str:
 # OpenAI helpers (shape-robust like local)
 # -----------------------------------------------------------------------------
 def _flatten_blocks(x) -> str:
+    """
+    Recursively extract text content from nested data structures.
+
+    Handles various OpenAI API response formats by walking through nested
+    dictionaries, lists, and objects to extract readable text content.
+
+    Args:
+        x: The data structure to flatten (dict, list, str, etc.)
+
+    Returns:
+        str: Concatenated text content separated by newlines
+    """
     out = []
     def walk(v):
         if isinstance(v, str):
@@ -326,6 +567,18 @@ def _flatten_blocks(x) -> str:
     walk(x)
     return "\n".join(s for s in out if isinstance(s, str) and s.strip()).strip()
 def extract_assistant_text(data: dict) -> str:
+    """
+    Extract the assistant's text response from OpenAI API response data.
+
+    Handles various OpenAI API response formats, looking for text content
+    in the standard 'choices' array and falling back to other common fields.
+
+    Args:
+        data (dict): The OpenAI API response data
+
+    Returns:
+        str: The extracted assistant text, or empty string if none found
+    """
     try:
         if not isinstance(data, dict):
             return ""
@@ -352,6 +605,19 @@ def extract_assistant_text(data: dict) -> str:
     except Exception:
         return ""
 def openai_chat(payload: dict, timeout: int = 180) -> str:
+    """
+    Make a chat completion request to the OpenAI API with retry logic.
+
+    Sends a request to OpenAI's chat completions endpoint with exponential
+    backoff retry for rate limiting and server errors.
+
+    Args:
+        payload (dict): The request payload for the OpenAI API
+        timeout (int): Request timeout in seconds (default: 180)
+
+    Returns:
+        str: The extracted response text, or error message on failure
+    """
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
     backoff = 2.0
     for attempt in range(1, 6):
@@ -382,6 +648,22 @@ def openai_chat(payload: dict, timeout: int = 180) -> str:
             backoff = min(30.0, backoff * 1.7)
     return "[Error: retries exhausted]"
 def openai_embed(texts: List[str]) -> List[List[float]]:
+    """
+    Generate embeddings for a list of texts using OpenAI's embeddings API.
+
+    Sends text to OpenAI's embeddings endpoint and returns the vector
+    representations for similarity search and retrieval.
+
+    Args:
+        texts (List[str]): List of text strings to embed
+
+    Returns:
+        List[List[float]]: List of embedding vectors, one per input text
+
+    Raises:
+        RuntimeError: If the number of returned embeddings doesn't match input
+        requests.HTTPError: If the API request fails
+    """
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
     payload = {"model": EMBED_MODEL, "input": texts}
     resp = requests.post(EMBEDDINGS_URL, headers=headers, json=payload, timeout=120)
@@ -847,6 +1129,19 @@ def persist_compressed_and_index(db, user_id: int, job_id: str, compressed_text:
 # Job lifecycle: scrape → stream-compress → file
 # -----------------------------------------------------------------------------
 def _update_job(db, job_id: str, *, status: Optional[str] = None, duo: Optional[str] = None, log_line: Optional[str] = None):
+    """
+    Update job status and log information in the database.
+
+    Updates a job's status, DUO code, and appends log messages to the job's
+    log file. Uses file-based logging to reduce database bloat.
+
+    Args:
+        db: Database session
+        job_id (str): The unique job identifier
+        status (Optional[str]): New status for the job
+        duo (Optional[str]): DUO authentication code (truncated to 64 chars)
+        log_line (Optional[str]): Log message to append to job's log file
+    """
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         return
@@ -861,6 +1156,18 @@ def _update_job(db, job_id: str, *, status: Optional[str] = None, duo: Optional[
     db.add(job)
     db.commit()
 def _status_callback_factory(job_id: str):
+    """
+    Create a callback function for updating job status during scraping.
+
+    Returns a callback function that can be used by the scraper to update
+    job status, handle DUO authentication codes, and log messages.
+
+    Args:
+        job_id (str): The unique job identifier
+
+    Returns:
+        function: Callback function that accepts (kind, message) parameters
+    """
     def cb(kind: str, message: str):
         db = SessionLocal()
         try:
@@ -883,6 +1190,16 @@ def _status_callback_factory(job_id: str):
 # Global single-worker lock: ensures only one scrape runs at a time
 JOB_LOCK = threading.Lock()
 def _wait_for_job_slot(job_id: str, poll_seconds: float = 2.5):
+    """
+    Wait for a job execution slot using a global lock.
+
+    Ensures only one scraping job runs at a time by acquiring a global lock.
+    Updates job status to show queue position and wait time.
+
+    Args:
+        job_id (str): The unique job identifier
+        poll_seconds (float): Polling interval while waiting (default: 2.5)
+    """
     db = SessionLocal()
     try:
         # Try fast-path acquire
@@ -901,6 +1218,12 @@ def _wait_for_job_slot(job_id: str, poll_seconds: float = 2.5):
     finally:
         db.close()
 def _release_job_slot():
+    """
+    Release the global job execution slot.
+
+    Safely releases the job lock to allow the next queued job to start.
+    Suppresses any exceptions during release to avoid blocking cleanup.
+    """
     with contextlib.suppress(Exception):
         if JOB_LOCK.locked():
             JOB_LOCK.release()
@@ -924,6 +1247,19 @@ def _schedule_next_24h(db, user_id: int):
     db.add(rec); db.commit()
 
 def _has_active_job(db, user_id: int) -> bool:
+    """
+    Check if a user has any active (non-completed) jobs.
+
+    Queries the database for jobs in active states like queued, starting,
+    logging in, or compressing.
+
+    Args:
+        db: Database session
+        user_id (int): The user's unique identifier
+
+    Returns:
+        bool: True if the user has any active jobs, False otherwise
+    """
     active = db.query(Job).filter(
         Job.user_id == user_id,
         Job.status.in_(["queued","starting","logging_in","compressing"])
@@ -931,6 +1267,20 @@ def _has_active_job(db, user_id: int) -> bool:
     return bool(active)
 
 def _enqueue_job_for_user(db, user_id: int, username: str, password: str, headless: bool, reuse_session_only: bool = False):
+    """
+    Create and start a new scraping job for a user.
+
+    Creates a job record in the database and starts a background thread
+    to execute the scraping and indexing process.
+
+    Args:
+        db: Database session
+        user_id (int): The user's unique identifier
+        username (str): Canvas username for login
+        password (str): Canvas password for login
+        headless (bool): Whether to run browser in headless mode
+        reuse_session_only (bool): Whether to only reuse existing sessions
+    """
     job_id = uuid.uuid4().hex[:16]
     job = Job(id=job_id, user_id=user_id, status="queued", log="",
               created_at=_now_utc(), updated_at=_now_utc())
@@ -1217,12 +1567,53 @@ def run_test_and_index(user_id: int, job_id: str):
 # Retrieval + chat (RAG disabled here: send entire compressed corpus each time)
 # -----------------------------------------------------------------------------
 def latest_document_id(db, user_id: int) -> Optional[str]:
+    """
+    Get the ID of the user's most recently created document.
+
+    Args:
+        db: Database session
+        user_id (int): The user's unique identifier
+
+    Returns:
+        Optional[str]: The document ID, or None if no documents exist
+    """
     row = db.query(Document).filter(Document.user_id == user_id).order_by(Document.created_at.desc()).first()
     return row.id if row else None
 def latest_job_for_user(db, user_id: int) -> Optional[Job]:
+    """
+    Get the user's most recently created job.
+
+    Args:
+        db: Database session
+        user_id (int): The user's unique identifier
+
+    Returns:
+        Optional[Job]: The latest job object, or None if no jobs exist
+    """
     return db.query(Job).filter(Job.user_id == user_id).order_by(Job.created_at.desc()).first()
-# Fix retrieve_context() vector shape and sorting
 def retrieve_context(db, doc_id: str, question: str, top_k: int, token_budget: int) -> str:
+    """
+    Retrieve most relevant document chunks using semantic similarity search.
+
+    NOTE: This function is currently UNUSED in the application. The app uses
+    _load_context_text() instead, which loads the entire compressed document.
+
+    Args:
+        db: Database session
+        doc_id: Document ID to search within
+        question: User's question to find relevant chunks for
+        top_k: Maximum number of chunks to return
+        token_budget: Maximum tokens allowed in the response
+
+    Returns:
+        str: Concatenated text of the most relevant chunks, truncated to token budget
+
+    Process:
+        1. Embeds the question using OpenAI's embedding API
+        2. Retrieves all chunks for the document from database
+        3. Calculates cosine similarity between question and each chunk
+        4. Returns top-k most similar chunks, joined and truncated
+    """
     qvec_list = openai_embed([question])
     if not qvec_list:
         return ""
@@ -1239,14 +1630,34 @@ def retrieve_context(db, doc_id: str, question: str, top_k: int, token_budget: i
         except Exception:
             continue
     scored.sort(key=lambda t: t[0], reverse=True)
+    #TO DO: investigate if i should get top k 
     top = [t[1] for t in scored[:max(1, top_k)]]
     joined = "\n\n".join(top)
     packed = truncate_to_tokens(joined, token_budget, CHAT_MODEL)
     if not packed and joined:
         packed = joined[:MAX_CONTEXT_CHARS]
     return packed
-# 3) Modify answer_with_context() to inject the timestamp
 def answer_with_context(question: str, context_text: str, prev_user_messages: Optional[List[str]] = None) -> str:
+    """
+    Generate an answer using the full document context and chat history.
+
+    This is the main RAG (Retrieval-Augmented Generation) function that combines
+    the user's question with the entire compressed document as context.
+
+    Args:
+        question: User's current question
+        context_text: Full compressed document text (from _load_context_text())
+        prev_user_messages: Optional list of previous user messages for context
+
+    Returns:
+        str: AI-generated answer based on the question and document context
+
+    Process:
+        1. Formats previous messages as context-only (not to be answered)
+        2. Creates system prompt with LaTeX math formatting rules
+        3. Sends question + full document to OpenAI chat completion
+        4. Returns the AI's response
+    """
     now_local = _ithaca_now_str()
     prev_blob = ""
     if prev_user_messages:
@@ -1431,7 +1842,7 @@ CONTEXT:
 
 def generate_flashcards(course: str, corpus: str) -> List[Dict[str, str]]:
     system = "You generate compact study flashcards. Output JSON only."
-    user = f"""Create 12 high-yield flashcards for this course:
+    user = f"""Create 100 high-yield flashcards for this course:
 Course: {course}
 
 Return JSON ONLY with this shape:
@@ -1701,6 +2112,16 @@ def logout():
 @app.route("/")
 @login_required
 def dashboard():
+    """
+    Main dashboard page showing user's jobs and auto-scrape settings.
+
+    Displays the user's recent jobs, their status, and DUO codes if any.
+    Also shows auto-scrape configuration and provides controls to start
+    new scrape jobs or test jobs.
+
+    Returns:
+        str: Rendered HTML dashboard page
+    """
     db = SessionLocal()
     try:
         u = current_user(db)
@@ -1973,6 +2394,24 @@ def chat():
         u = current_user(db)
 
         def _load_context_text() -> str:
+            """
+            Load the entire compressed document content for the current user.
+
+            This function loads the full compressed/summarized document that serves
+            as context for all chat queries. It does NOT perform selective retrieval.
+
+            Returns:
+                str: Full compressed document text, or empty string if none found
+
+            Process:
+                1. Gets the user's most recent job (scraping/processing job)
+                2. Tries to load from stream file (compressed output from job)
+                3. Fallback: loads from Document table if stream file missing
+                4. Returns entire content as a single string
+
+            Note: This is called for every chat message, loading the complete
+            document context rather than relevant chunks.
+            """
             last_job = latest_job_for_user(db, u.id)
             if last_job:
                 stream_path = _stream_file_path(u.id, last_job.id)

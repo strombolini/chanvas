@@ -703,31 +703,40 @@ def _push_snippet(status_callback: Callable[[str, str], None], kind: str, where:
 
 
 def crawl_course(driver, course_id: str, input_txt_path: Path, status_callback: Callable[[str, str], None]):
+    """The core BFS crawler that systematically visits all course pages
+    (including announcements) and extracts content, with deduplication and live
+    updates."""
+
+    # Define course URLs and essential pages to crawl
     base = f"{START_URL}/courses/{course_id}"
     seeds = [
-        base,
-        f"{base}/assignments",
-        f"{base}/modules",
-        f"{base}/assignments/syllabus",
-        f"{base}/grades",
-        f"{base}/announcements",
+        base,                                 # Course home page
+        f"{base}/assignments",               # All assignments
+        f"{base}/modules",                   # Course modules/content
+        f"{base}/assignments/syllabus",      # Course syllabus
+        f"{base}/grades",                    # Grade information
+        f"{base}/announcements",             # Course announcements (includes new ones)
     ]
 
+    # Navigate to course home and expand any collapsible content
     driver.get(base)
     try_expand_all(driver, 5)
     time.sleep(1.0)
 
+    # Get course name and create directory for downloaded files
     course_name = get_course_title(driver)
     course_dir = input_txt_path.parent / sanitize(course_name)
     make_dir(course_dir)
 
     session = requests.Session()
 
-    # First: modules quick harvest of files
+    # Initial file harvest from modules page
     with contextlib.suppress(Exception):
         driver.get(f"{base}/modules")
         try_expand_all(driver, 5)
         time.sleep(1.0)
+
+        # Find all downloadable files in modules
         links = driver.find_elements(By.XPATH, "//a[contains(@href, '/files/') or contains(@href, '.pdf') or contains(@href, '.docx') or contains(@href, '.pptx') or contains(@href, '.xlsx') or contains(@href, '.csv')]")
         seen_files: Set[str] = set()
         for a in links:
@@ -735,17 +744,21 @@ def crawl_course(driver, course_id: str, input_txt_path: Path, status_callback: 
             if "/files/" in href and href not in seen_files:
                 seen_files.add(href)
                 with contextlib.suppress(Exception):
+                    # Download and extract text from file
                     p = download_file_from_canvas(driver, href, course_dir, session)
                     if p and p.exists():
+                        # Create temporary file for text extraction
                         with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as tmpf:
                             tmp_txt_path = Path(tmpf.name)
                         try:
+                            # Extract text content from downloaded file
                             written = stream_extract_file_to_temp(p, tmp_txt_path)
                             if written >= MIN_TEXT_LEN_TO_RECORD:
+                                # Add extracted text to main input file
                                 append_header_and_streamed_file(input_txt_path, course_name, tmp_txt_path, f"FILE: {p.name} ({href})")
                                 if status_callback:
                                     status_callback("log", f"[file] saved {p.name} ({written} chars) from {href}")
-                                # Push live snippet
+                                # Send live content snippet for real-time updates
                                 try:
                                     with open(tmp_txt_path, "r", encoding="utf-8", errors="ignore") as r:
                                         content = r.read(MAX_PAGE_CHARS)
@@ -753,16 +766,20 @@ def crawl_course(driver, course_id: str, input_txt_path: Path, status_callback: 
                                 except Exception:
                                     pass
                         finally:
+                            # Clean up temporary text file
                             with contextlib.suppress(Exception):
                                 tmp_txt_path.unlink()
 
-    visited_pages_h: Set[bytes] = set()
-    visited_files_h: Set[bytes] = set()
-    queue: List[str] = list(seeds)
+    # Initialize BFS crawling state
+    visited_pages_h: Set[bytes] = set()    # Track visited pages by MD5 hash
+    visited_files_h: Set[bytes] = set()    # Track visited files by MD5 hash
+    queue: List[str] = list(seeds)         # Queue for BFS traversal
     steps = 0
 
+    # Breadth-First Search crawling of course pages
     while queue and len(visited_pages_h) < MAX_LINKS_PER_COURSE:
         url = queue.pop(0)
+        # Use MD5 hash to avoid revisiting same page
         h = hashlib.md5(url.encode("utf-8")).digest()
         if h in visited_pages_h:
             continue
@@ -847,36 +864,49 @@ def crawl_course(driver, course_id: str, input_txt_path: Path, status_callback: 
 
 
 def run_course_crawl(driver, course_id: str, input_txt_path: Path, status_callback: Callable[[str, str], None]):
+    """Pre-processor that harvests files from the modules page before
+    calling the comprehensive crawler."""
+    
+    # Navigate to course home page and get basic info
     base = f"{START_URL}/courses/{course_id}"
     driver.get(base)
     try_expand_all(driver, timeout=5)
     time.sleep(1.0)
 
+    # Extract course name and create directory for downloaded files
     course_name = get_course_title(driver)
     course_dir = input_txt_path.parent / sanitize(course_name)
     make_dir(course_dir)
 
-    # Quick file harvest then full crawl via BFS with snippets/logs
+    # Pre-harvest files from modules page before full crawling
     session = requests.Session()
     with contextlib.suppress(Exception):
+        # Visit modules page to find downloadable files
         driver.get(f"{base}/modules")
         try_expand_all(driver, 5)
         time.sleep(1.0)
+
+        # Find all file links (PDFs, Word docs, PowerPoint, Excel, CSV)
         links = driver.find_elements(By.XPATH, "//a[contains(@href, '/files/') or contains(@href, '.pdf') or contains(@href, '.docx') or contains(@href, '.pptx') or contains(@href, '.xlsx') or contains(@href, '.csv')]")
         for a in links:
             href = a.get_attribute("href") or ""
             if "/files/" in href:
                 with contextlib.suppress(Exception):
+                    # Download file to course directory
                     p = download_file_from_canvas(driver, href, course_dir, session)
                     if p and p.exists():
+                        # Create temporary file for text extraction
                         with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as tmpf:
                             tmp_txt_path = Path(tmpf.name)
                         try:
+                            # Extract text content from downloaded file
                             written = stream_extract_file_to_temp(p, tmp_txt_path)
                             if written >= MIN_TEXT_LEN_TO_RECORD:
+                                # Append extracted text to main input file
                                 append_header_and_streamed_file(input_txt_path, course_name, tmp_txt_path, f"FILE: {p.name} ({href})")
                                 if status_callback:
                                     status_callback("log", f"[file-prefetch] saved {p.name} ({written} chars) from {href}")
+                                # Send live snippet for real-time updates
                                 try:
                                     with open(tmp_txt_path, "r", encoding="utf-8", errors="ignore") as r:
                                         content = r.read(MAX_PAGE_CHARS)
@@ -884,10 +914,11 @@ def run_course_crawl(driver, course_id: str, input_txt_path: Path, status_callba
                                 except Exception:
                                     pass
                         finally:
+                            # Clean up temporary text file
                             with contextlib.suppress(Exception):
                                 tmp_txt_path.unlink()
 
-    # BFS across main tabs and discovered links with live updates
+    # Perform comprehensive BFS crawling of all course pages
     crawl_course(driver, course_id, input_txt_path, status_callback)
 
 
@@ -895,34 +926,39 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
     """
     Run a complete Canvas scrape job and return the aggregated input file path and temp root for later cleanup.
     """
+    # Create temporary directory for this scrape job
     tmp_root = Path(tempfile.mkdtemp(prefix="canvas_job_"))
     input_txt = tmp_root / "input.txt"
     input_txt.write_text("Canvas Raw Input (aggregated page and file text)\n", encoding="utf-8")
 
+    # Initialize Chrome browser driver
     driver = build_driver(headless=headless)
     try:
-        # First, try to reuse an existing warm session
+        # Check if we can reuse an existing Canvas session to avoid re-login
         if status_callback:
             status_callback("status", "checking_session")
 
         logged_in = session_looks_logged_in(driver)
 
         if not logged_in:
+            # No valid session found
             if REUSE_SESSION_ONLY or not (username and password):
-                # In reuse-only mode or no creds provided: do NOT log in
+                # Auto-scrape mode: skip if no warm session available
                 if status_callback:
                     status_callback("log", "No valid Canvas session and reuse-only mode set -> skipping login")
                     status_callback("status", "login_required")
                 return {"input_path": "", "tmp_root": str(tmp_root)}
 
-            # Allowed to log in (manual run)
+            # Manual scrape: perform fresh login with credentials
             if status_callback:
                 status_callback("status", "logging_in")
             login_canvas(driver, username, password, status_callback)
         else:
+            # Existing session is valid, proceed without login
             if status_callback:
                 status_callback("status", "logged_in")
 
+        # Discover all Fall 2025 courses for this user
         if status_callback:
             status_callback("status", "discovering_courses")
 
@@ -931,21 +967,25 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
         if status_callback:
             status_callback("log", f"Found {len(course_ids)} Fall 2025 courses: {course_ids}")
 
+        # Scrape each course individually
         for cid in course_ids:
             if status_callback:
                 status_callback("log", f"Processing course {cid}")
             run_course_crawl(driver, cid, input_txt, status_callback)
 
+        # Mark job as completed
         if status_callback:
             status_callback("status", "completed")
 
         return {"input_path": str(input_txt), "tmp_root": str(tmp_root)}
     except Exception as e:
+        # Handle any errors during scraping
         if status_callback:
             status_callback("log", f"error: {e}")
             status_callback("status", "failed")
         return {"input_path": "", "tmp_root": str(tmp_root)}
     finally:
+        # Always clean up browser resources
         with contextlib.suppress(Exception):
             driver.quit()
 
