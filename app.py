@@ -1109,6 +1109,28 @@ def cosine_sim(a: List[float], b: List[float]) -> float:
         return 0.0
     return dot / (math.sqrt(na) * math.sqrt(nb))
 def persist_compressed_and_index(db, user_id: int, job_id: str, compressed_text: str) -> str:
+    """
+    Store compressed document and create chunks with embeddings for retrieval.
+
+    This function is called after document compression to persist the final
+    compressed text and create searchable chunks for semantic retrieval.
+
+    Args:
+        db: Database session
+        user_id: ID of the user who owns the document
+        job_id: ID of the processing job
+        compressed_text: Final compressed/summarized document content
+
+    Returns:
+        str: The created document ID
+
+    Process:
+        1. Saves compressed text to disk as artifact
+        2. Creates Document record in database
+        3. Chunks the compressed text for embeddings
+        4. Generates embeddings for each chunk
+        5. Stores chunks with embeddings in database for retrieval
+    """
     # Ensure output dir exists
     out_dir = os.path.abspath(os.environ.get("COMPRESSED_OUT_DIR", "compressed_out"))
     os.makedirs(out_dir, exist_ok=True)
@@ -1122,6 +1144,38 @@ def persist_compressed_and_index(db, user_id: int, job_id: str, compressed_text:
     doc = Document(id=doc_id, user_id=user_id, job_id=job_id, content=sanitize_db_text(compressed_text))
     db.add(doc)
     db.commit()
+
+    # Create chunks with embeddings for semantic retrieval
+    if compressed_text.strip():
+        try:
+            _update_job(db, job_id, log_line="Creating chunks and embeddings for retrieval...")
+
+            # Split compressed text into chunks
+            text_chunks = chunk_for_embeddings(compressed_text, EMBED_MODEL, RETRIEVAL_CHUNK_TOKENS)
+
+            if text_chunks:
+                # Generate embeddings for all chunks
+                embeddings = openai_embed(text_chunks)
+
+                # Store chunks with embeddings in database
+                for i, (chunk_text, embedding) in enumerate(zip(text_chunks, embeddings)):
+                    chunk = Chunk(
+                        id=uuid.uuid4().hex,
+                        document_id=doc_id,
+                        text=sanitize_db_text(chunk_text),
+                        embedding=json.dumps(embedding)
+                    )
+                    db.add(chunk)
+
+                db.commit()
+                _update_job(db, job_id, log_line=f"Created {len(text_chunks)} chunks with embeddings")
+            else:
+                _update_job(db, job_id, log_line="No chunks created - text too short")
+
+        except Exception as e:
+            log_exception("chunk_creation", e)
+            _update_job(db, job_id, log_line="WARNING: Failed to create chunks, falling back to full document search")
+
     # Log artifact path for convenience
     _update_job(db, job_id, log_line=f"Final compressed artifact saved: {out_path}")
     return doc_id
@@ -1566,6 +1620,24 @@ def run_test_and_index(user_id: int, job_id: str):
 # -----------------------------------------------------------------------------
 # Retrieval + chat (RAG disabled here: send entire compressed corpus each time)
 # -----------------------------------------------------------------------------
+def count_chunks_for_user(db, user_id: int) -> int:
+    """
+    Count total chunks available for a user across all their documents.
+
+    Args:
+        db: Database session
+        user_id: User ID
+
+    Returns:
+        int: Total number of chunks available
+    """
+    result = db.execute(sql_text("""
+        SELECT COUNT(*) FROM chunks c
+        JOIN documents d ON c.document_id = d.id
+        WHERE d.user_id = :user_id
+    """), {"user_id": user_id}).scalar()
+    return result or 0
+
 def latest_document_id(db, user_id: int) -> Optional[str]:
     """
     Get the ID of the user's most recently created document.
@@ -2494,11 +2566,33 @@ def chat():
                 if not isinstance(hist, list):
                     hist = []
                 prev_user_msgs = hist[:]
-                context_text = _load_context_text()
-                if not context_text:
-                    answer = "No compressed context found yet. Start a scrape or test scrape."
+
+                # Use semantic search to get relevant chunks instead of entire document
+                doc_id = latest_document_id(db, u.id)
+                total_chunks = count_chunks_for_user(db, u.id)
+
+                if not doc_id:
+                    answer = "No documents found yet. Start a scrape or test scrape."
+                elif total_chunks == 0:
+                    answer = f"No chunks found in database. Document ID: {doc_id}. You may need to reprocess your documents to create chunks."
                 else:
-                    answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
+                    # Calculate token budget for context (reserve space for question and response)
+                    context_budget = MODEL_CONTEXT_TOKENS - 2000  # Reserve 2000 tokens for question/response
+                    context_text = retrieve_context(db, doc_id, question, TOP_K, context_budget)
+                    if not context_text:
+                        answer = "No relevant context found for your question."
+                        chunks = None
+                    else:
+                        answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
+
+                        # Store chunks for debug display
+                        chunk_list = context_text.split('\n\n') if context_text else []
+                        chunks = {
+                            'count': len(chunk_list),
+                            'total_chars': len(context_text),
+                            'preview': context_text[:800] + '...' if len(context_text) > 800 else context_text,
+                            'chunks': chunk_list[:3]  # Show first 3 chunks
+                        }
                 hist.append(question)
                 if len(hist) > 20:
                     hist = hist[-20:]
