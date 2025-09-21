@@ -30,6 +30,7 @@ from sqlalchemy.exc import PendingRollbackError
 from logging.handlers import RotatingFileHandler
 from models import Base, User, Job, Document, Chunk
 from canvas_scraper import run_canvas_scrape_job
+from config import TEST_SCRAPE_TEXT, TEST_SCRAPE_TEXT_2
 # Optional tokenizer (true token budgeting like local scripts)
 try:
     import tiktoken
@@ -1550,7 +1551,14 @@ def run_scrape_and_index(user_id: int, username: str, password: str, headless: b
             log_exception("extract_classes_list", e)
             _update_job(db, job_id, log_line="WARNING: Failed to extract classes")
 
-        
+        # Create document and chunks for semantic retrieval
+        try:
+            doc_id = persist_compressed_and_index(db, user_id, job_id, compressed_text_final)
+            _update_job(db, job_id, log_line=f"Created document and chunks for semantic retrieval: {doc_id}")
+        except Exception as e:
+            log_exception("persist_chunks_real_scrape", e)
+            _update_job(db, job_id, log_line="WARNING: Failed to create chunks for retrieval")
+
         # If auto-scrape is enabled, schedule the next run in 24h
         try:
             rec = _get_or_create_auto(db, user_id)
@@ -1572,22 +1580,12 @@ def run_scrape_and_index(user_id: int, username: str, password: str, headless: b
 # -----------------------------------------------------------------------------
 # Test Scrape: inject small fake corpus â†’ compress â†’ index (no Selenium)
 # -----------------------------------------------------------------------------
-TEST_SCRAPE_TEXT = """--- Scraped from Test Course at [https://canvas.cornell.edu/courses/TEST](https://canvas.cornell.edu/courses/TEST) ---
-Course: CS 4780 Machine Learning.
-Instructor: Prof. Ada Lovelace. Office hours Tue 2â€“4pm in Rhodes 475.
-Grading policy: Homework 40%, Project 25%, Midterm 20%, Final 15%.
-Late policy: 10% per day up to 3 days.
-Assignment 1: Linear Regression due Sept 20 at 11:59pm on Canvas. Submit a single PDF with code appendix.
-Modules: Week 1 (Intro, Linear Models), Week 2 (Gradient Descent, Regularization), Week 3 (Generalization).
-Readings: ESLII Chapters 3â€“4.
-Piazza is used for Q&A; announcements will be posted weekly.
-Announcement: Project groups finalized by Sept 25. Datasets posted under Files â†’ Datasets.
-"""
+
 def run_test_and_index(user_id: int, job_id: str):
     db = SessionLocal()
     try:
         _update_job(db, job_id, status="starting", log_line="Test scrape started (injecting synthetic corpus)")
-        raw = TEST_SCRAPE_TEXT
+        raw = TEST_SCRAPE_TEXT_2
         # Create and populate the live scrape stream for the test run
         scrape_path = _scrape_stream_file_path(user_id, job_id)
         with open(scrape_path, "w", encoding="utf-8") as f:
@@ -2583,10 +2581,17 @@ def chat():
                         answer = "No relevant context found for your question."
                         chunks = None
                     else:
+                        # Log chunk previews being used as context
+                        chunk_list = context_text.split('\n\n') if context_text else []
+                        logger.info(f"[CHAT DEBUG] Question: {question[:100]}...")
+                        logger.info(f"[CHAT DEBUG] Using {len(chunk_list)} most relevant chunks ({len(context_text)} chars total)")
+                        for i, chunk in enumerate(chunk_list):
+                            preview = chunk[:200].replace('\n', ' ')
+                            logger.info(f"[CHAT DEBUG] Chunk {i+1}: {preview}...")
+
                         answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
 
                         # Store chunks for debug display
-                        chunk_list = context_text.split('\n\n') if context_text else []
                         chunks = {
                             'count': len(chunk_list),
                             'total_chars': len(context_text),

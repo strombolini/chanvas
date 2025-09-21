@@ -22,17 +22,11 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from config import START_URL, COURSES_URL, ALLOWED_EXT_FOR_EXTRACTION
 
 # Service-friendly Canvas scraper module for running on a server (e.g., Heroku).
 # Exposes: run_canvas_scrape_job(username, password, headless, status_callback)
 #          -> {"input_path": str, "tmp_root": str}
-
-START_URL = "https://canvas.cornell.edu"
-COURSES_URL = "https://canvas.cornell.edu/courses"
-
-ALLOWED_EXT_FOR_EXTRACTION = {
-    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".txt", ".md", ".rtf"
-}
 
 MAX_LINKS_PER_COURSE = int(os.environ.get("MAX_LINKS_PER_COURSE", "250"))
 MIN_TEXT_LEN_TO_RECORD = int(os.environ.get("MIN_TEXT_LEN_TO_RECORD", "80"))

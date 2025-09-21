@@ -1,0 +1,389 @@
+
+--- COURSE START [CS 4750 COMBINED Foundations of Robotics _2025FA_] (courses/80462) ---
+The user is enrolled in the following class: CS 4750 COMBINED Foundations of Robotics (2025FA).
+
+Starting summary for CS 4750 COMBINED Foundations of Robotics (2025FA):
+
+**Course Overview and Staff:**
+- Title: Foundations of Robotics (CS 4750/CS 5750/MAE 4760/ECE 4770)
+- Instructors: Preston Culbertson, Tapomayukh “Tapo” Bhattacharjee
+- Graduate TAs: Pranav Thakkar, Zhanxin Wu, Yunhai Feng, Jiaying Fang, Shengmiao (Samuel) Jin
+- Undergraduate TAs/Consultants: Katherine Chang, Alif Abdullah, Lina Hao, Jun Choi, Rolando Rodriguez, Jillian Chong, Jonathan Ma, Sabrina Liu, Ananya Jajodia, Manolis Huerta-Stylianou, Yuxuan Lin
+
+**Course Modules and Content:**
+- Introduction and ROS Fundamentals
+- Robot Kinematics
+- State Estimation
+- Motion Planning
+- Control
+- Special Topics
+
+**Key Lecture Notes and Materials:**
+- Intro_and_ROS_slides.pdf (1.26 GB) and no-videos version
+- Introduction_Kinematics_RigidBodies.pdf (192 KB)
+- Mobile_Robot_Kinematics.pdf (496 KB)
+- Homogeneous_Transforms.pdf (161 KB)
+- Sep-18-board-homogeneous-transforms.pdf (1.93 MB)
+- Sep-16-board-beyond-rotation.pdf (2.02 MB)
+- Beyond_Rotation_Matrices.pdf (207 KB)
+- 3D_Rotations.pdf (215 KB)
+- Sep-11-board-bicycle-rotations.pdf (2.43 MB)
+- Sep-9-board-mobile-robot-kinematics.pdf (1.9 MB)
+
+**Lecture Topics Highlights:**
+- Mobile Robot Kinematics: poses, configurations, wheels, canonical mobile robots, constraints.
+- Rigid Motions and Homogeneous Transforms: rotation matrices, Euler angles, axis-angle, quaternions.
+- Beyond Rotation Matrices: properties of rotation matrices, alternative rotation representations.
+- Bicycle Model and Rotations: linear and angular velocities, no-slip constraints.
+- 3D Rotations: rotation representations and transformations.
+
+**Assignments and Due Dates:**
+- HW 1: Out, due 9/17 (Wednesday)
+- HW 2.1: Out 9/18, due 10/8
+- HW 2.2: Out 9/25, due 10/22
+
+**Announcements:**
+- Hardware pick-up after class on 9/18; last time for orientation reps.
+- Office hours rescheduled for Pranav Thakkar (9/23 and 9/30) and Preston Culbertson (9/15 and 9/22).
+- Instructions for SSH through local VSCode posted.
+- No recent messages yet in course stream.
+
+**Grading and Submission:**
+- Grades are tracked via Gradescope.
+- What-If score feature available to test impact of upcoming or resubmitted assignments.
+- Assignments submitted through Gradescope.
+- Late policy and detailed grading rubrics not explicitly stated in the provided text.
+
+**Course Logistics:**
+- Course materials and discussions are hosted on Canvas and Gradescope.
+- Ed Discussion forum available for questions and announcements.
+- Modules track student progress (Introduction and ROS Fundamentals, Robot Kinematics, State Estimation, Motion Planning, Control, Special Topics).
+
+**Technical Notes:**
+- Rotation matrices must be orthogonal with determinant +1.
+- Euler angles have singularities; quaternions provide a compact, non-singular representation.
+- Bicycle model used to illustrate kinematics and constraints of mobile robots.
+- Homogeneous transforms used for rigid body motions.
+
+**Contact and Office Hours:**
+- Specific office hours times not listed here; check Ed Discussion or Canvas announcements.
+- Contact via Canvas messaging or Ed Discussion.
+
+---
+
+**Checklist of Actionable Next Steps:**
+- Download and review lecture notes: Intro_and_ROS_slides.pdf, Mobile_Robot_Kinematics.pdf, Homogeneous_Transforms.pdf, and others.
+- Complete HW 1 by 9/17.
+- Prepare for HW 2.1 due 10/8 and HW 2.2 due 10/22.
+- Attend hardware pick-up after class on 9/18 if needed.
+- Check Ed Discussion for updates on office hours and SSH instructions.
+- Use Gradescope to submit assignments and track grades.
+- Review rotation representations and kinematics lecture materials thoroughly.
+
+End of summary for the class that the user is enrolled in, CS 4750 COMBINED Foundations of Robotics (2025FA).
+
+--- COURSE END [CS 4750 COMBINED Foundations of Robotics _2025FA_] (courses/80462) ---
+
+
+--- COURSE START [CS 3780 COMBINED-COMEET Introduction to Machine Learning _2025FA_] (courses/80579) ---
+The user is enrolled in the following class: CS 3780 COMBINED-COMEET Introduction to Machine Learning (2025FA). Starting summary for this class.
+
+---
+
+**CS 3780/CS 5780 Introduction to Machine Learning (Fall 2025) - Summary**
+
+**Instructors and Staff:**
+- Instructor: John Thickstun
+- Course Coordinator: Lacy Jordaens
+- Graduate TAs: Guangyuan Hao, Haozheng Yu, James Kim, Prithwish Dan
+- Undergraduate TAs & Consultants: Multiple (not individually listed)
+- Contact and office hours details are not explicitly provided in the extracted text.
+
+**Course Description:**
+- Introduction to machine learning concepts, including supervised learning, model selection, linear classifiers, decision trees, support vector machines, and neural networks.
+- Emphasis on both theoretical understanding and hands-on programming projects.
+- Inclusive course environment.
+
+**Textbook and Readings:**
+- Primary textbook: "Understanding Machine Learning" (UML) by Shai Shalev-Shwartz and Shai Ben-David.
+- Specific chapters assigned per lecture/module, e.g.:
+  - Lecture 1: UML Chapter 1
+  - Lecture 2: UML 19.1, 19.3 (excluding 19.2)
+  - Lecture 3: UML 18 (excluding 18.1)
+  - Lecture 4: UML 2.1-2.2, 18.2
+  - Lecture 5: UML Chapter 11 (excluding 11.1)
+  - Lecture 6: UML Chapter 9 (start to 9.1.2)
+  - Lecture 7: UML Chapters 9.1.1 to 9.1.2
+  - Lecture 8: UML 15.1 (excluding 15.1.2), 15.2 (stop before 15.2.1)
+- Additional readings include McNemar's Test Tutorial (external link).
+
+**Course Modules and Lectures:**
+- Lecture 1: Introduction and Policies
+- Lecture 2: K-Nearest Neighbor (KNN)
+- Lecture 3: Decision Trees and Inductive Learning
+- Lecture 4: Prediction and Overfitting
+- Lecture 5: Model Selection and Assessment
+- Lecture 6: Linear Classifiers
+- Lecture 7: Perceptron Algorithm
+- Lecture 8: Support Vector Machines (SVM)
+- Additional topics include kernels, stochastic gradient descent (SGD), neural networks, and Naive Bayes (some assignments not yet available).
+
+**Assignments and Projects:**
+
+1. **P(-1) Introduction to Numpy**
+   - Ungraded, 0 points.
+   - Purpose: Getting started with Python/Numpy.
+   - Submission: Via Canvas, attempt in progress.
+
+2. **P0 Getting Started**
+   - Ungraded, 0 points.
+   - Early assignment to familiarize with course tools.
+
+3. **P1 - KNN**
+   - Due: Monday, September 15, 2025, 5:00 PM
+   - Points: 13 points
+   - Status: Example submission scored 13/13.
+   - No additional details provided.
+   - Available until September 17, 2025, 9:00 PM.
+
+4. **P2 - Perceptron**
+   - Due: Thursday, September 25, 2025, 5:00 PM
+   - Points: 95 points (ungraded yet)
+   - Available: September 18, 2025, 5:00 PM to September 29, 2025, 5:00 PM.
+   - No additional details provided.
+
+5. **P3 - Kernels**
+   - Due: Thursday, October 10, 2024, 5:00 PM (Note: year 2024 likely a typo, should be 2025)
+   - Points: 100 points (ungraded yet)
+   - Not yet available.
+
+6. **P4 - SGD + Neural Network**
+   - Due: Thursday, October 24, 2024, 5:00 PM (Likely 2025)
+   - Points: 100 points (ungraded yet)
+   - Not yet available.
+
+7. **P5 - Naive Bayes**
+   - Due: Thursday, November 14, 2024, 5:00 PM (Likely 2025)
+   - Points: 100 points (ungraded yet)
+   - Not yet available.
+
+8. **Paper Reading Quizzes:**
+   - SVM Quiz: Available Sep 23, 2025, 5:00 PM to Sep 30, 2025, 5:00 PM, 20 points.
+   - PCA Quiz: No due date specified, 21 points.
+   - Optimizer Quiz: Available Oct 21, 2024 to Nov 2, 2024 (likely 2025), 18 points.
+   - Neural Networks Quiz: No due date specified, 20 points.
+   - These quizzes do not count towards the final grade.
+
+9. **Final Project Bonus**
+   - Ungraded, 10 points possible.
+   - Unlimited attempts allowed.
+   - Submission type: Upload (Jupyter notebook or code).
+   - No due date specified.
+
+10. **Late Days and Late Policy:**
+    - Late days are tracked per assignment (e.g., "P1 late days used").
+    - Specific late day policies or penalties are not detailed in the extracted text.
+    - Extensions have been granted for Project 1 until Wednesday, September 17, 2025, 9:00 PM.
+
+**Grading:**
+- Detailed grading breakdown not explicitly provided.
+- Assignments have point values; some are ungraded but have points possible.
+- Paper reading quizzes do not count towards final grade.
+- Final project bonus points available.
+
+**Submission and Tools:**
+- Assignments submitted via Canvas.
+- Vocareum used for programming assignments.
+- Gradescope used for grading.
+- Ed Discussion forum available for Q&A.
+- Some assignments and modules are unpublished or locked until certain dates.
+
+**Course Policies and Announcements:**
+- Course is inclusive and encourages participation.
+- Erratum for ID3 algorithm: Correction in the condition for stopping splitting in decision trees (check if all examples have the same value for the feature with largest gain, not just same label).
+- Extensions and late submission updates posted on Ed Discussion.
+- Notification settings can be customized per course.
+
+**Sample Problem Set Questions:**
+- Specific problem set questions are not detailed in the extracted text.
+- Assignments like P1-KNN and P2-Perceptron are programming projects with points.
+- Paper reading quizzes cover topics like SVM, PCA, Optimizer, Neural Networks.
+
+**Lecture Notes and Slides:**
+- Lecture slides and PDFs are provided for all major topics.
+- Examples include:
+  - 01-intro.pdf: Introduction to ML concepts and course overview.
+  - 02-knn.pdf: Supervised learning and KNN.
+  - 03-trees.pdf: Decision trees and inductive learning.
+  - 04-overfitting.pdf: Prediction, overfitting, and inductive learning.
+  - 05-modsel.pdf: Model selection and assessment.
+  - 07-linear.pdf: Linear classifiers.
+  - perceptron.pdf: Perceptron algorithm.
+  - 08-svm.pdf: Support Vector Machines.
+
+**Datasets and Links:**
+- No specific datasets mentioned in the extracted text.
+- External links to readings and tutorials (e.g., McNemar's Test Tutorial).
+- Interactive demo for perceptron: https://mlweb.loria.fr/book/en/perceptron.html
+
+---
+
+**Checklist of Actionable Next Steps:**
+
+- Review Lecture 1 materials and complete the Prerequisite Assessment.
+- Submit P1 - KNN by Sep 15, 2025, 5:00 PM (completed in example).
+- Prepare and submit P2 - Perceptron by Sep 25, 2025, 5:00 PM.
+- Plan for upcoming assignments P3 (Kernels), P4 (SGD + Neural Network), and P5 (Naive Bayes) as they become available.
+- Complete paper reading quizzes on SVM (Sep 23-30), PCA, Optimizer, and Neural Networks as scheduled.
+- Monitor Ed Discussion for announcements, extensions, and clarifications.
+- Customize notification settings for course updates.
+- Use Vocareum and Gradescope for assignment submissions and grading.
+- Study lecture notes and assigned UML textbook chapters thoroughly.
+- Note the erratum on the ID3 algorithm for decision trees.
+- Consider working on the Final Project Bonus for extra credit.
+
+---
+
+End of summary for the class that the user is enrolled in, CS 3780 COMBINED-COMEET Introduction to Machine Learning (2025FA).
+
+--- COURSE END [CS 3780 COMBINED-COMEET Introduction to Machine Learning _2025FA_] (courses/80579) ---
+
+
+--- COURSE START [SANSK 2251 COMBINED-XLIST Intermediate Sanskrit I _2025FA_] (courses/76737) ---
+The user is enrolled in the following class: SANSK 2251 COMBINED-XLIST Intermediate Sanskrit I (2025FA). Starting summary for this class.
+
+---
+
+**Course: Intermediate Sanskrit I (SANSK 2251 COMBINED-XLIST) – Fall 2025**
+
+**Instructor:** Krishna Subrahmanian  
+- Contact info not explicitly provided; check Canvas or department directory.  
+- No office hours listed in the provided materials.
+
+**Schedule & Location:**  
+- Term: August 25 to December 8, 2025  
+- Class meets twice weekly:  
+  - Thursdays, 5:00 PM – 6:30 PM  
+  - Fridays, 9:00 AM – 10:00 AM  
+- Location: Room RCK 189  
+- Total weekly instruction time: 150 minutes
+
+**Course Description & Content:**  
+- Focus on selected episodes from the *Rāmāyaṇa*: Bālakāṇḍa, Sundarakāṇḍa, and Yuddhakāṇḍa.  
+- Approximately 300 verses covered.  
+- Emphasis on revising important Sanskrit grammatical points during classes.  
+- Episode 1 materials include the origin of the *Rāmāyaṇa* and the birth of Sanskrit poetry, specifically verses 1.1.1-8 from Bālakāṇḍa.  
+- Text excerpts in Devanagari script are provided for study and translation.
+
+**Course Materials:**  
+- PDF files available on Canvas include:  
+  - Syllabus (Intermediate Sanskrit I - Syllabus.pdf)  
+  - Course Materials Episode 1 (Intermediate Sanskrit I - Course Materials - Episode 1.pdf)  
+  - Resources (Intermediate Sanskrit I - Resources.pdf)  
+- Resources document recommends online dictionaries, notably:  
+  - Cologne Digital Sanskrit Dictionaries: https://www.sanskrit-lexicon.uni-koeln.de/  
+  - Apte, Vaman Shivaram. *The Practical Sanskrit-English Dictionary* (1998 edition), available online.
+
+**Evaluation & Grading:**  
+- One final exam worth 100% of the grade.  
+- Exam to be held during the regular final exam period (exact date/time not specified).  
+- No mention of midterms, quizzes, or homework grading.  
+- No explicit late policy or rubric details provided.
+
+**Assignments & Submission:**  
+- The Canvas Assignments and Modules pages are disabled for this course; no online assignments or problem sets are currently accessible.  
+- No problem set questions or subparts are listed in the available materials.  
+- No submission instructions or deadlines are provided.
+
+**Announcements & Notifications:**  
+- Course notifications are enabled by default and can be customized at the course level on Canvas.  
+- No recent announcements or messages are currently posted.
+
+**Additional Notes:**  
+- The course is conducted fully in-person.  
+- Students are encouraged to use the recommended dictionaries and resources to aid their study.  
+- The course emphasizes reading and understanding classical Sanskrit texts with grammatical revision.
+
+---
+
+**Checklist of Actionable Next Steps:**  
+- Confirm final exam date and time once announced.  
+- Download and review all provided PDFs: syllabus, episode 1 materials, and resources.  
+- Familiarize yourself with the recommended online dictionaries.  
+- Attend classes on Thursdays and Fridays at RCK 189.  
+- Monitor Canvas for any updates or announcements from the instructor.  
+- Prepare by reading and translating the provided verses from the *Rāmāyaṇa* Bālakāṇḍa.  
+- Reach out to the instructor via Canvas or department contact for any clarifications.
+
+---
+
+End of summary for the class that the user is enrolled in, SANSK 2251 COMBINED-XLIST Intermediate Sanskrit I (2025FA).
+
+--- COURSE END [SANSK 2251 COMBINED-XLIST Intermediate Sanskrit I _2025FA_] (courses/76737) ---
+
+
+--- COURSE START [Course] (courses/76384) ---
+The user is enrolled in the following class: ECON 3130: Probability and Statistics, Fall 2025.
+
+Starting summary for ECON 3130: Probability and Statistics.
+
+**Course Overview and Schedule:**
+- Lectures: Monday and Wednesday, 8:40am–9:55am, Olin Hall 155.
+- Instructor: Douglas McKee (douglas.mckee@cornell.edu).
+- Instructor office hours: See Canvas for schedule.
+- Teaching Assistants (TAs) and Sections:
+  - Serena Leung (sl2862@cornell.edu)
+    - Section 201: Friday, 9:05am-9:55am, Uris Hall 262
+    - Section 202: Friday, 10:10am-11:00am, Uris Hall 262
+  - Shunqi Zhang (sz672@cornell.edu)
+    - Section 203: Friday, 1:25pm-2:15pm, Ives Hall 217
+    - Section 204: Friday, 2:30pm-3:20pm, Ives Hall 217
+  - Keerthana Peringeth (kp624@cornell.edu)
+    - Section 201: Friday, 9:05am-9:55am (location not fully specified in snippet)
+- TA office hours: See Canvas for details.
+
+**Grading and Assignments:**
+- Problem Sets:
+  - Solutions for Problem Set 1 are posted on Canvas.
+  - Grading for Problem Set 1 will cover only 2 of the 10 problems, with limited detailed feedback.
+  - Students are encouraged to carefully review solutions and understand all problems.
+- Assignments are submitted via Canvas and/or Gradescope.
+- Late policy and detailed grading rubrics are not explicitly stated in the provided text; check Canvas for updates.
+- Students can view grades and use "What-If" scenarios on Canvas to estimate impact of future or resubmitted assignments.
+
+**Course Materials and Resources:**
+- Required readings and lecture notes are available on Canvas.
+- A document titled "A general approach to solving probability theory problems" outlines a stepwise method:
+  1. Read the problem carefully to understand what is given and asked.
+  2. Define notation and random variables, including distributions and parameters.
+  3. Identify given probabilities (marginal, joint, conditional) and properties (expectations, variances, covariances).
+  4. Use appropriate probability rules and distribution properties to solve.
+- Another document, "How to Succeed in this Class," recommends:
+  - Reading before class, attending lectures, taking good notes.
+  - Working through in-class problems.
+  - Identifying and resolving knowledge gaps by reviewing notes and reworking problems.
+  - Starting problem sets early.
+- Software and tools:
+  - Statistics software available via Apps on Demand.
+  - Panopto recordings for lectures.
+  - Library reserves and course materials accessible on Canvas.
+
+**Announcements and Policies:**
+- Recent announcement: Solutions for Problem Set 1 are posted.
+- The course modules page is disabled; all materials are accessed via Canvas assignments and files.
+- Students should monitor Canvas announcements for updates on grading and deadlines.
+
+**Actionable Checklist:**
+- Review Problem Set 1 solutions posted on Canvas.
+- Attend lectures Monday and Wednesday at 8:40am in Olin Hall 155.
+- Attend your assigned TA section on Friday for additional help.
+- Check Canvas regularly for office hours, announcements, and assignment updates.
+- Use the general approach document to guide problem-solving.
+- Start Problem Set 2 early once released.
+- Utilize Panopto recordings and software resources as needed.
+- Contact instructor or TAs via email for questions; check Canvas for office hours.
+
+End of summary for the class that the user is enrolled in, ECON 3130: Probability and Statistics.
+
+--- COURSE END [Course] (courses/76384) ---
+
