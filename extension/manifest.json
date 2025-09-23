@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Chanvas Auto-Scraper",
+  "version": "1.0.0",
+  "description": "Automatically detect Canvas login and trigger course scraping",
+  "permissions": [
+    "activeTab",
+    "cookies",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://canvas.cornell.edu/*",
+    "http://localhost:*/*",
+    "https://*.herokuapp.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://canvas.cornell.edu/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Chanvas Scraper"
+  }
+}

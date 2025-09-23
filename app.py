@@ -30,6 +30,24 @@ from sqlalchemy.exc import PendingRollbackError
 from logging.handlers import RotatingFileHandler
 from models import Base, User, Job, Document, Chunk
 from canvas_scraper import run_canvas_scrape_job
+
+def run_canvas_scrape_job_with_cookies(cookies, headless=True, status_callback=None):
+    """
+    Placeholder function for cookie-based Canvas scraping.
+
+    This would need to be implemented to use session cookies instead of login credentials.
+    For now, this returns a failure to indicate the feature needs full implementation.
+    """
+    if status_callback:
+        status_callback("log", "Cookie-based scraping not yet implemented - would need canvas_scraper.py modifications")
+
+    # In production, this would:
+    # 1. Set up selenium with the provided cookies
+    # 2. Navigate to Canvas with existing session
+    # 3. Scrape content without login
+    # 4. Return results in same format as run_canvas_scrape_job
+
+    raise NotImplementedError("Cookie-based scraping requires canvas_scraper.py modifications")
 from config import TEST_SCRAPE_TEXT, TEST_SCRAPE_TEXT_2
 # Optional tokenizer (true token budgeting like local scripts)
 try:
@@ -43,6 +61,14 @@ import requests
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
+
+# Add CORS headers to allow browser extension requests
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 # Database (normalize Heroku scheme and force sslmode=require on hosted Postgres)
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///local.db")
@@ -1350,6 +1376,25 @@ def _enqueue_job_for_user(db, user_id: int, username: str, password: str, headle
     t = threading.Thread(target=worker, name=f"auto-{job_id}", daemon=True)
     t.start()
 
+def _enqueue_session_job(db, user_id: int, cookies_json: str, job_id: str):
+    """
+    Create and start a new scraping job using session cookies from browser extension.
+
+    Args:
+        db: Database session
+        user_id (int): The user's unique identifier
+        cookies_json (str): JSON string of Canvas session cookies
+        job_id (str): The job ID to use
+    """
+    def worker():
+        _wait_for_job_slot(job_id)
+        try:
+            run_session_scrape_and_index(user_id, cookies_json, job_id)
+        finally:
+            _release_job_slot()
+    t = threading.Thread(target=worker, name=f"session-{job_id}", daemon=True)
+    t.start()
+
 def _resume_interrupted_jobs():
     db = SessionLocal()
     try:
@@ -1430,6 +1475,94 @@ def _compute_current_term_label(now: Optional[datetime.datetime] = None) -> str:
     if 1 <= m <= 5:
         return f"Spring {y}"
     return f"Summer {y}"
+
+def run_session_scrape_and_index(user_id: int, cookies_json: str, job_id: str):
+    """
+    Run scraping and indexing using session cookies from browser extension.
+
+    Args:
+        user_id (int): The user's unique identifier
+        cookies_json (str): JSON string of Canvas session cookies
+        job_id (str): The job ID for tracking
+    """
+    db = SessionLocal()
+    tmp_root = ""  # ensure defined for finally
+    try:
+        # Set Canvas environment variables
+        term_label_default = _compute_current_term_label()
+        os.environ["CANVAS_FETCH_ALL_COURSES"] = "1"
+        os.environ["CANVAS_FAVORITES_ONLY"] = "0"
+        os.environ["CANVAS_INCLUDE_PAST_COURSES"] = "0"
+        os.environ["CANVAS_INCLUDE_FUTURE_COURSES"] = "0"
+        os.environ["CANVAS_INCLUDE_UNPUBLISHED"] = "1"
+        os.environ["CANVAS_PER_PAGE"] = os.environ.get("CANVAS_PER_PAGE", "100")
+        os.environ["CANVAS_ENROLLMENT_STATES"] = "active,invited,completed"
+        os.environ["CANVAS_CURRENT_TERM_ONLY"] = "1"
+        os.environ["CANVAS_TERM_LABEL"] = os.environ.get("CANVAS_TERM_LABEL", term_label_default)
+
+        with contextlib.suppress(KeyError):
+            del os.environ["CANVAS_COURSE_STATES"]
+
+        _update_job(
+            db, job_id, status="starting",
+            log_line="Starting session-based Canvas scrape using browser extension cookies"
+        )
+
+        cb = _status_callback_factory(job_id)
+
+        # Parse cookies for session-based scraping
+        try:
+            cookies = json.loads(cookies_json)
+            _update_job(db, job_id, status="session_scraping",
+                       log_line=f"Using {len(cookies)} session cookies from browser extension")
+        except json.JSONDecodeError:
+            _update_job(db, job_id, status="failed",
+                       log_line="Failed to parse session cookies")
+            return
+
+        # Call modified canvas scraper with cookies instead of credentials
+        _update_job(db, job_id, status="scraping", log_line="Starting Canvas scrape with session cookies")
+
+        # For now, we'll use a simplified approach - in production you'd modify canvas_scraper.py
+        # to accept cookies instead of username/password
+        try:
+            res = run_canvas_scrape_job_with_cookies(cookies=cookies, headless=True, status_callback=cb)
+        except Exception as e:
+            # Fallback: log error and mark job as failed
+            _update_job(db, job_id, status="failed",
+                       log_line=f"Session-based scraping failed: {str(e)}")
+            return
+
+        input_path = (res or {}).get("input_path") or ""
+        if not input_path or not os.path.exists(input_path):
+            _update_job(db, job_id, status="failed", log_line="No scraping output found")
+            return
+
+        # Continue with compression and indexing (same as regular flow)
+        _update_job(db, job_id, status="compressing", log_line="Starting compression")
+
+        with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+            raw_content = f.read()
+
+        if not raw_content.strip():
+            _update_job(db, job_id, status="failed", log_line="No content to process")
+            return
+
+        # Compress and index the content
+        compressed = compress_text(raw_content, job_id, db, is_course_aware=True)
+        doc_id = persist_compressed_and_index(db, user_id, job_id, compressed)
+
+        _update_job(db, job_id, status="completed",
+                   log_line=f"Session-based scrape completed successfully. Document ID: {doc_id}")
+
+    except Exception as e:
+        log_exception(f"run_session_scrape_and_index({user_id}, {job_id})", e)
+        _update_job(db, job_id, status="failed", log_line=f"Session scrape failed: {str(e)}")
+    finally:
+        if tmp_root and os.path.exists(tmp_root):
+            with contextlib.suppress(Exception):
+                shutil.rmtree(tmp_root)
+        db.close()
 
 def run_scrape_and_index(user_id: int, username: str, password: str, headless: bool, job_id: str, reuse_session_only: bool = False):
     db = SessionLocal()
@@ -2619,6 +2752,106 @@ def chat():
     finally:
         db.close()
 
+
+# -----------------------------------------------------------------------------
+# Browser Extension API Endpoints
+# -----------------------------------------------------------------------------
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """Health check endpoint for browser extension"""
+    return jsonify({"status": "ok", "service": "chanvas", "timestamp": datetime.datetime.utcnow().isoformat()}), 200
+
+@app.route("/api/session-login", methods=["POST"])
+def api_session_login():
+    """Handle session-based login from browser extension"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+
+        canvas_cookies = data.get('canvas_cookies', [])
+        canvas_url = data.get('canvas_url', '')
+        timestamp = data.get('timestamp', 0)
+
+        if not canvas_cookies:
+            return jsonify({"error": "No Canvas cookies provided"}), 400
+
+        # For now, we'll need to identify the user somehow
+        # This is a simplified approach - in production you'd want better user identification
+        session_token = None
+        user_identifier = None
+
+        # Look for Canvas session/user identifier in cookies
+        for cookie in canvas_cookies:
+            if cookie['name'] == 'canvas_session' or 'session' in cookie['name']:
+                session_token = cookie['value']
+            elif cookie['name'] == 'canvas_user_id' or 'user' in cookie['name']:
+                user_identifier = cookie['value']
+
+        if not session_token:
+            return jsonify({"error": "No valid Canvas session found in cookies"}), 400
+
+        # Store cookies for future scraping (this is where cookies_json becomes useful)
+        db = SessionLocal()
+        try:
+            # For demo purposes, we'll use the first user or create a temp association
+            # In production, you'd have proper user identification
+            cookies_json = json.dumps(canvas_cookies)
+
+            # Try to find existing user session or create temporary mapping
+            # This is a simplified approach for the demo
+            temp_user_id = hash(session_token) % 1000000  # Simple hash-based ID
+
+            # Check if we have a user with this session
+            auto_scrape = db.query(AutoScrape).filter(AutoScrape.id == str(temp_user_id)).first()
+            if not auto_scrape:
+                # Create a temporary AutoScrape entry for this session
+                auto_scrape = AutoScrape(
+                    id=str(temp_user_id),
+                    user_id=temp_user_id,
+                    enabled=True,
+                    username="extension_user",
+                    password_enc="",  # No password needed for session-based
+                    headless=True,
+                    cookies_json=cookies_json
+                )
+                db.add(auto_scrape)
+            else:
+                # Update existing entry with new cookies
+                auto_scrape.cookies_json = cookies_json
+                auto_scrape.updated_at = datetime.datetime.utcnow()
+                db.add(auto_scrape)
+
+            db.commit()
+
+            # Start a scraping job using the session cookies
+            job_id = uuid.uuid4().hex
+            job = Job(
+                id=job_id,
+                user_id=temp_user_id,
+                status="session_starting",
+                created_at=datetime.datetime.utcnow(),
+                updated_at=datetime.datetime.utcnow()
+            )
+            db.add(job)
+            db.commit()
+
+            # Queue the session-based scraping job
+            _enqueue_session_job(db, temp_user_id, cookies_json, job_id)
+
+            return jsonify({
+                "success": True,
+                "message": "Canvas session captured successfully",
+                "job_id": job_id,
+                "user_id": temp_user_id,
+                "cookies_count": len(canvas_cookies)
+            }), 200
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({"error": f"Session login failed: {str(e)}"}), 500
 
 # -----------------------------------------------------------------------------
 # Live Duo endpoint for newest job (JSON for polling)
