@@ -31,7 +31,6 @@
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                credentials: 'include',
                 body: JSON.stringify({
                     canvas_cookies: cookies,
                     canvas_url: window.location.origin,

@@ -233,18 +233,51 @@ def normalize_link(href, course_id: str) -> str:
 
     return url
 
-def session_looks_logged_in(driver) -> bool:
+def session_looks_logged_in(driver, status_callback=None) -> bool:
     """
     Heuristic: load Canvas, see if we land on dashboard/courses and *not* on a login flow.
     """
+    if status_callback:
+        status_callback("log", f"Checking session by navigating to: {START_URL}")
+
     try:
         driver.get(START_URL)
+        if status_callback:
+            status_callback("log", f"Navigated to Canvas, current URL: {driver.current_url}")
+
+        # Create debug file immediately after navigation
+        debug_file = f"/tmp/canvas_session_debug_{int(time.time())}.txt"
+        try:
+            dashboard = driver.find_elements(By.ID, "dashboard")
+            course_links = driver.find_elements(By.XPATH, "//a[contains(@href, '/courses')]")
+            body_text = driver.find_element(By.TAG_NAME, "body").text[:500] if driver.find_elements(By.TAG_NAME, "body") else "No body found"
+            page_source_snippet = driver.page_source[:1000] if driver.page_source else "No page source"
+
+            with open(debug_file, 'w') as f:
+                f.write(f"Canvas Session Debug Report (Early)\n")
+                f.write(f"Current URL: {driver.current_url}\n")
+                f.write(f"Page title: {driver.title}\n")
+                f.write(f"Dashboard elements found: {len(dashboard)}\n")
+                f.write(f"Course link elements found: {len(course_links)}\n")
+                f.write(f"First 1000 chars of page source:\n{page_source_snippet}\n")
+                f.write(f"First 500 chars of body text:\n{body_text}\n")
+
+            if status_callback:
+                status_callback("log", f"Early debug info written to: {debug_file}")
+        except Exception as debug_e:
+            if status_callback:
+                status_callback("log", f"Failed to write debug file: {str(debug_e)}")
+
         WebDriverWait(driver, 6).until(_fallback_any_of(
             EC.presence_of_element_located((By.ID, "dashboard")),
             EC.presence_of_element_located((By.XPATH, "//a[contains(@href, '/courses')]"))
         ))
-    except Exception:
+        if status_callback:
+            status_callback("log", "Found dashboard or course elements - session appears active")
+    except Exception as e:
         # Even if wait fails, inspect URL to detect login pages
+        if status_callback:
+            status_callback("log", f"Wait for dashboard/courses failed: {str(e)}")
         pass
 
     try:
@@ -252,16 +285,67 @@ def session_looks_logged_in(driver) -> bool:
     except Exception:
         cur = ""
 
+    if status_callback:
+        status_callback("log", f"Current URL after navigation: {cur}")
+
     # Explicit login patterns
     if "/login" in cur or "/saml" in cur:
+        if status_callback:
+            status_callback("log", "Session check failed: URL contains /login or /saml")
         return False
 
     # Login form present?
     with contextlib.suppress(Exception):
-        driver.find_element(By.XPATH, "//input[@name='j_username' or @id='username']")
-        return False
+        login_elem = driver.find_element(By.XPATH, "//input[@name='j_username' or @id='username']")
+        if login_elem:
+            if status_callback:
+                status_callback("log", "Session check failed: Login form detected")
+            return False
 
-    # Looks like we’re in a logged-in context (dashboard/courses/etc.)
+    # Check for other login indicators
+    try:
+        page_title = driver.title.lower()
+        if "login" in page_title:
+            if status_callback:
+                status_callback("log", f"Session check failed: Login in page title: {page_title}")
+            return False
+    except Exception:
+        pass
+
+    # Additional debugging - check what elements we can find
+    if status_callback:
+        try:
+            # Check for specific Canvas elements
+            dashboard = driver.find_elements(By.ID, "dashboard")
+            course_links = driver.find_elements(By.XPATH, "//a[contains(@href, '/courses')]")
+            body_text = driver.find_element(By.TAG_NAME, "body").text[:500] if driver.find_elements(By.TAG_NAME, "body") else "No body found"
+            page_source_snippet = driver.page_source[:1000] if driver.page_source else "No page source"
+
+            status_callback("log", f"Session validation details:")
+            status_callback("log", f"  - Found {len(dashboard)} dashboard elements")
+            status_callback("log", f"  - Found {len(course_links)} course link elements")
+            status_callback("log", f"  - Page title: {driver.title}")
+            status_callback("log", f"  - First 500 chars of body: {body_text}")
+
+            # Write detailed debug info to file
+            debug_file = f"/tmp/canvas_session_debug_{int(time.time())}.txt"
+            with open(debug_file, 'w') as f:
+                f.write(f"Canvas Session Debug Report\n")
+                f.write(f"Current URL: {driver.current_url}\n")
+                f.write(f"Page title: {driver.title}\n")
+                f.write(f"Dashboard elements found: {len(dashboard)}\n")
+                f.write(f"Course link elements found: {len(course_links)}\n")
+                f.write(f"First 1000 chars of page source:\n{page_source_snippet}\n")
+                f.write(f"First 500 chars of body text:\n{body_text}\n")
+
+            status_callback("log", f"Debug info written to: {debug_file}")
+
+        except Exception as e:
+            status_callback("log", f"Error during detailed session validation: {str(e)}")
+
+    # Looks like we're in a logged-in context (dashboard/courses/etc.)
+    if status_callback:
+        status_callback("log", "Session validation successful - appears to be logged in")
     return True
 
 def login_canvas(driver, username, password, status_callback: Callable[[str, str], None]):
@@ -973,16 +1057,173 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
 
         return {"input_path": str(input_txt), "tmp_root": str(tmp_root)}
     except Exception as e:
-        # Handle any errors during scraping
+        # Handle any errors during scraping but preserve partial data
         if status_callback:
             status_callback("log", f"error: {e}")
             status_callback("status", "failed")
-        return {"input_path": "", "tmp_root": str(tmp_root)}
+
+        # Check if input.txt has any content and return it even on failure
+        if input_txt.exists() and input_txt.stat().st_size > 0:
+            if status_callback:
+                status_callback("log", f"Preserving partial scrape data: {input_txt.stat().st_size} bytes")
+            return {"input_path": str(input_txt), "tmp_root": str(tmp_root)}
+        else:
+            if status_callback:
+                status_callback("log", "No scraped data to preserve")
+            return {"input_path": "", "tmp_root": str(tmp_root)}
     finally:
         # Always clean up browser resources
         with contextlib.suppress(Exception):
             driver.quit()
 
     # Do NOT delete tmp_root here; app.py will clean up after embedding
+
+
+def run_canvas_scrape_job_with_cookies(cookies: List[Dict], headless: bool = True, status_callback: Callable[[str, str], None] = None) -> Dict:
+    """
+    Run a complete Canvas scrape job using session cookies from browser extension.
+
+    Args:
+        cookies: List of cookie dictionaries from browser extension
+        headless: Whether to run Chrome in headless mode
+        status_callback: Function to report status updates
+
+    Returns:
+        Dict with input_path and tmp_root for cleanup
+    """
+    if status_callback:
+        status_callback("log", f"Starting cookie-based Canvas scrape with {len(cookies)} cookies")
+
+    # Create temporary directory for this scrape job
+    tmp_root = Path(tempfile.mkdtemp(prefix="canvas_cookie_job_"))
+    input_txt = tmp_root / "input.txt"
+    input_txt.write_text("Canvas Raw Input (aggregated page and file text) - Cookie Session\n", encoding="utf-8")
+
+    # Initialize Chrome browser driver
+    driver = build_driver(headless=headless)
+
+    try:
+        # Navigate to each domain and inject cookies
+        if status_callback:
+            status_callback("status", "initializing_session")
+            status_callback("log", "Injecting session cookies from browser extension")
+
+        domains_to_try = [
+            "https://canvas.cornell.edu",
+            "https://login.canvas.cornell.edu"
+        ]
+
+        cookies_added = 0
+        for domain_url in domains_to_try:
+            try:
+                if status_callback:
+                    status_callback("log", f"Navigating to {domain_url} to establish domain context")
+
+                driver.get(domain_url)
+
+                # Inject all cookies for this domain
+                for cookie in cookies:
+                    try:
+                        if status_callback:
+                            status_callback("log", f"Attempting to add cookie: {cookie['name']} for {domain_url}")
+
+                        # Convert extension cookie format to Selenium format
+                        selenium_cookie = {
+                            'name': cookie['name'],
+                            'value': cookie['value'],
+                            'path': cookie.get('path', '/'),
+                        }
+
+                        # Add optional fields if present
+                        if cookie.get('secure') == True:
+                            selenium_cookie['secure'] = True
+                        if cookie.get('httpOnly') == True:
+                            selenium_cookie['httpOnly'] = True
+
+                        driver.add_cookie(selenium_cookie)
+                        cookies_added += 1
+
+                        if status_callback:
+                            status_callback("log", f"Successfully added cookie: {cookie['name']} for {domain_url}")
+
+                    except Exception as e:
+                        if status_callback:
+                            status_callback("log", f"Failed to add cookie {cookie['name']} for {domain_url}: {str(e)}")
+                        continue
+
+            except Exception as e:
+                if status_callback:
+                    status_callback("log", f"Failed to navigate to {domain_url}: {str(e)}")
+                continue
+
+        if status_callback:
+            status_callback("log", f"Successfully injected {cookies_added}/{len(cookies)} cookies")
+
+        # Refresh the page to activate the session
+        if status_callback:
+            status_callback("status", "activating_session")
+            status_callback("log", "Refreshing page to activate injected session cookies")
+
+        driver.refresh()
+        time.sleep(3)  # Give time for session to activate
+
+        # Check if we're logged in with the injected cookies
+        if status_callback:
+            status_callback("status", "verifying_session")
+
+        logged_in = session_looks_logged_in(driver)
+
+        if not logged_in:
+            if status_callback:
+                status_callback("log", "Session cookies did not result in successful login - may be expired")
+                status_callback("status", "session_failed")
+            return {"input_path": "", "tmp_root": str(tmp_root)}
+
+        if status_callback:
+            status_callback("log", "Session cookies successfully authenticated!")
+            status_callback("status", "session_active")
+
+        # Discover all current term courses for this user
+        if status_callback:
+            status_callback("status", "discovering_courses")
+
+        course_ids = get_fall_2025_course_ids(driver)
+
+        if status_callback:
+            status_callback("log", f"Found {len(course_ids)} courses: {course_ids}")
+
+        # Scrape each course individually
+        for cid in course_ids:
+            if status_callback:
+                status_callback("log", f"Processing course {cid}")
+            run_course_crawl(driver, cid, input_txt, status_callback)
+
+        # Mark job as completed
+        if status_callback:
+            status_callback("status", "completed")
+            status_callback("log", "Cookie-based Canvas scrape completed successfully")
+
+        return {"input_path": str(input_txt), "tmp_root": str(tmp_root)}
+
+    except Exception as e:
+        # Handle any errors during scraping but preserve partial data
+        if status_callback:
+            status_callback("log", f"Cookie-based scraping error: {e}")
+            status_callback("status", "failed")
+
+        # Check if input.txt has any content and return it even on failure
+        if input_txt.exists() and input_txt.stat().st_size > 0:
+            if status_callback:
+                status_callback("log", f"Preserving partial scrape data: {input_txt.stat().st_size} bytes")
+            return {"input_path": str(input_txt), "tmp_root": str(tmp_root)}
+        else:
+            if status_callback:
+                status_callback("log", "No scraped data to preserve")
+            return {"input_path": "", "tmp_root": str(tmp_root)}
+
+    finally:
+        # Always clean up browser resources
+        with contextlib.suppress(Exception):
+            driver.quit()
 
 

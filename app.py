@@ -29,25 +29,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import PendingRollbackError
 from logging.handlers import RotatingFileHandler
 from models import Base, User, Job, Document, Chunk
-from canvas_scraper import run_canvas_scrape_job
-
-def run_canvas_scrape_job_with_cookies(cookies, headless=True, status_callback=None):
-    """
-    Placeholder function for cookie-based Canvas scraping.
-
-    This would need to be implemented to use session cookies instead of login credentials.
-    For now, this returns a failure to indicate the feature needs full implementation.
-    """
-    if status_callback:
-        status_callback("log", "Cookie-based scraping not yet implemented - would need canvas_scraper.py modifications")
-
-    # In production, this would:
-    # 1. Set up selenium with the provided cookies
-    # 2. Navigate to Canvas with existing session
-    # 3. Scrape content without login
-    # 4. Return results in same format as run_canvas_scrape_job
-
-    raise NotImplementedError("Cookie-based scraping requires canvas_scraper.py modifications")
+from canvas_scraper import run_canvas_scrape_job, run_canvas_scrape_job_with_cookies
 from config import TEST_SCRAPE_TEXT, TEST_SCRAPE_TEXT_2
 # Optional tokenizer (true token budgeting like local scripts)
 try:
@@ -65,7 +47,12 @@ app.secret_key = os.environ["SECRET_KEY"]
 # Add CORS headers to allow browser extension requests
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
+    origin = request.headers.get('Origin')
+    if origin and 'canvas.cornell.edu' in origin:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+    else:
+        response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
@@ -1386,14 +1373,21 @@ def _enqueue_session_job(db, user_id: int, cookies_json: str, job_id: str):
         cookies_json (str): JSON string of Canvas session cookies
         job_id (str): The job ID to use
     """
+    print(f"🚀 Starting session job thread: user_id={user_id}, job_id={job_id}")
     def worker():
+        print(f"🔄 Session job worker started: {job_id}")
         _wait_for_job_slot(job_id)
         try:
+            print(f"📋 Running session scrape and index: {job_id}")
             run_session_scrape_and_index(user_id, cookies_json, job_id)
+            print(f"✅ Session scrape completed: {job_id}")
+        except Exception as e:
+            print(f"💥 Session job error: {job_id} - {str(e)}")
         finally:
             _release_job_slot()
     t = threading.Thread(target=worker, name=f"session-{job_id}", daemon=True)
     t.start()
+    print(f"🎯 Session job thread started: {job_id}")
 
 def _resume_interrupted_jobs():
     db = SessionLocal()
@@ -1549,7 +1543,7 @@ def run_session_scrape_and_index(user_id: int, cookies_json: str, job_id: str):
             return
 
         # Compress and index the content
-        compressed = compress_text(raw_content, job_id, db, is_course_aware=True)
+        compressed = compress_raw_text(raw_content, f"Session job {job_id}: ")
         doc_id = persist_compressed_and_index(db, user_id, job_id, compressed)
 
         _update_job(db, job_id, status="completed",
@@ -2328,7 +2322,13 @@ def dashboard():
     db = SessionLocal()
     try:
         u = current_user(db)
-        jobs = db.query(Job).filter(Job.user_id == u.id).order_by(Job.created_at.desc()).limit(12).all()
+        # Get regular user jobs
+        user_jobs = db.query(Job).filter(Job.user_id == u.id).order_by(Job.created_at.desc()).limit(8).all()
+        # Get recent session-based jobs (temp user IDs > 100000)
+        session_jobs = db.query(Job).filter(Job.user_id > 100000).order_by(Job.created_at.desc()).limit(4).all()
+        # Combine and sort by creation time
+        all_jobs = sorted(user_jobs + session_jobs, key=lambda x: x.created_at or datetime.datetime.min, reverse=True)[:12]
+        jobs = all_jobs
         last_job = latest_job_for_user(db, u.id)
         stream_ready = False
         if last_job:
@@ -2337,9 +2337,17 @@ def dashboard():
         for j in jobs:
             duo = (j.duo_code or "").strip()
             duo_html = f"<div class='duo'>DUO CODE: {duo}</div>" if duo else ""
+
+            # Determine if this is a session-based job
+            is_session_job = j.user_id > 100000
+            job_type_badge = "<span class='badge' style='background:#4CAF50;color:white;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;'>Extension</span>" if is_session_job else ""
+
+            # Format job ID for display
+            display_id = j.id[:8] + "..." if len(j.id) > 12 else j.id
+
             rows.append(f"""
 <tr>
-  <td><span class="mono">{j.id}</span></td>
+  <td><span class="mono">{display_id}</span>{job_type_badge}</td>
   <td>{j.status or ''}{' ' + duo_html if duo_html else ''}</td>
   <td><span class="mono">{(j.updated_at or j.created_at).strftime('%Y-%m-%d %H:%M:%S')}</span></td>
   <td><a class="btn" href="/job/{j.id}">Open</a></td>
@@ -2348,6 +2356,7 @@ def dashboard():
         jobs_html = f"""
 <div class="card">
   <h2>Jobs</h2>
+  <p><small>Manual scrapes + Browser extension scrapes <span style='background:#4CAF50;color:white;font-size:10px;padding:2px 6px;border-radius:10px;'>Extension</span></small></p>
   <table>
     <thead><tr><th>ID</th><th>Status</th><th>Updated</th><th></th></tr></thead>
     <tbody>
@@ -2544,16 +2553,24 @@ def job_detail(job_id):
     db = SessionLocal()
     try:
         u = current_user(db)
+        # First try to find job for current user
         job = db.query(Job).filter(Job.id == job_id, Job.user_id == u.id).first()
+        # If not found, check if it's a session-based job (allow access to session jobs)
+        if not job:
+            job = db.query(Job).filter(Job.id == job_id, Job.user_id > 100000).first()
         if not job:
             return ocean_layout("Job", "<div class='card'>Job not found.</div>"), 404
-        duo_html = f"<div class='duo'>DUO CODE: {job.duo_code}</div>" if (job.duo_code or "").strip() else "<div class='badge'>No Duo code captured yet.</div>"
+        # Check if it's a session job and add appropriate badges
+        is_session_job = job.user_id > 100000
+        session_badge = "<span style='background:#4CAF50;color:white;font-size:12px;padding:4px 8px;border-radius:12px;margin-left:10px;'>Extension Job</span>" if is_session_job else ""
+
+        duo_html = f"<div class='duo'>DUO CODE: {job.duo_code}</div>" if (job.duo_code or "").strip() else ("<div class='badge'>No Duo code (extension job)</div>" if is_session_job else "<div class='badge'>No Duo code captured yet.</div>")
         # In job_detail(job_id), replace the body HTML with IDs and add the poller:
         body = f"""
         <div class="card">
-          <h2>Job <span class="mono">{job.id}</span></h2>
+          <h2>Job <span class="mono">{job.id[:8]}...</span>{session_badge}</h2>
           <p>Status: <span id="job-status" class="badge">{job.status or ''}</span></p>
-          {duo_html}
+          {duo_html if not is_session_job else '<div class="badge">Used session cookies from browser extension</div>'}
           <p><a class="btn" href="/">Back to dashboard</a></p>
         </div>
         <div class="card">
@@ -2761,13 +2778,19 @@ def api_health():
     """Health check endpoint for browser extension"""
     return jsonify({"status": "ok", "service": "chanvas", "timestamp": datetime.datetime.utcnow().isoformat()}), 200
 
-@app.route("/api/session-login", methods=["POST"])
+@app.route("/api/session-login", methods=["POST", "OPTIONS"])
 def api_session_login():
+    # Handle CORS preflight request
+    if request.method == "OPTIONS":
+        return "", 200
     """Handle session-based login from browser extension"""
     try:
+        print("🔍 Session login endpoint called")
         data = request.get_json()
         if not data:
+            print("❌ No JSON data provided")
             return jsonify({"error": "No JSON data provided"}), 400
+        print(f"📦 Received data: {len(data.get('canvas_cookies', []))} cookies")
 
         canvas_cookies = data.get('canvas_cookies', [])
         canvas_url = data.get('canvas_url', '')
@@ -2839,6 +2862,7 @@ def api_session_login():
             # Queue the session-based scraping job
             _enqueue_session_job(db, temp_user_id, cookies_json, job_id)
 
+            print(f"✅ Session-based job created: user_id={temp_user_id}, job_id={job_id}")
             return jsonify({
                 "success": True,
                 "message": "Canvas session captured successfully",
@@ -2851,7 +2875,31 @@ def api_session_login():
             db.close()
 
     except Exception as e:
+        print(f"💥 Session login error: {str(e)}")
+        print(f"💥 Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": f"Session login failed: {str(e)}"}), 500
+
+@app.route("/api/session-jobs", methods=["GET"])
+def api_session_jobs():
+    """Get all session-based jobs for debugging"""
+    db = SessionLocal()
+    try:
+        # Get jobs for temp user IDs (6-digit numbers from hash)
+        jobs = db.query(Job).filter(Job.user_id > 100000).order_by(Job.created_at.desc()).limit(20).all()
+        result = []
+        for job in jobs:
+            result.append({
+                "job_id": job.id,
+                "user_id": job.user_id,
+                "status": job.status,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "updated_at": job.updated_at.isoformat() if job.updated_at else None
+            })
+        return jsonify({"jobs": result}), 200
+    finally:
+        db.close()
 
 # -----------------------------------------------------------------------------
 # Live Duo endpoint for newest job (JSON for polling)
@@ -2876,7 +2924,11 @@ def job_state(job_id):
     db = SessionLocal()
     try:
         u = current_user(db)
+        # First try to find job for current user
         job = db.query(Job).filter(Job.id == job_id, Job.user_id == u.id).first()
+        # If not found, check if it's a session-based job (allow access to session jobs)
+        if not job:
+            job = db.query(Job).filter(Job.id == job_id, Job.user_id > 100000).first()
         if not job:
             return jsonify({"status": "", "duo_code": "", "log": ""}), 404
         try:
