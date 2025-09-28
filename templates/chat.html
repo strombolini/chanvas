@@ -66,8 +66,8 @@
   <div class="mt">
     <div class="title" style="font-size:18px">Top snippets used</div>
     <ul>
-      {% for (t, s) in chunks %}
-        <li class="mut">[{{ loop.index }}] score={{ "%.3f"|format(s) }} — {{ t[:200] }}{% if t|length > 200 %}…{% endif %}</li>
+      {% for t in chunks.chunks %}
+        <li class="mut">[{{ loop.index }}] — {{ t[:200] }}{% if t|length > 200 %}…{% endif %}</li>
       {% endfor %}
     </ul>
   </div>
