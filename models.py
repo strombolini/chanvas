@@ -4,6 +4,8 @@ from sqlalchemy import Column, String, DateTime, Text, Integer, ForeignKey
 
 Base = declarative_base()
 
+"""Stores user account information including login credentials. Each user can have
+  multiple scraping jobs and documents."""
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -11,6 +13,8 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+"""Represents a single Canvas scraping task with status tracking and logs. Each job
+  belongs to one user but can generate multiple documents."""
 class Job(Base):
     __tablename__ = "jobs"
     id = Column(String(64), primary_key=True)
@@ -21,6 +25,8 @@ class Job(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+"""Contains the full compressed/processed Canvas content from a scraping job.
+  Multiple documents can belong to the same job (though current code creates one per job)."""
 class Document(Base):
     __tablename__ = "documents"
     id = Column(String(64), primary_key=True)
@@ -29,6 +35,8 @@ class Document(Base):
     content = Column(Text)  # Full aggregated input.txt
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+"""Small pieces of a document split for RAG/embedding search. Each chunk belongs to
+  exactly one document and contains a text segment with its AI embedding vector."""
 class Chunk(Base):
     __tablename__ = "chunks"
     id = Column(String(64), primary_key=True)

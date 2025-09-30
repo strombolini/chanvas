@@ -1,0 +1,172 @@
+
+--- COURSE START [GLOBAL] (courses/80462) ---
+The user is enrolled in the following class: CS 4750/CS 5750/ECE 4770/MAE 4760 COMBINED Foundations of Robotics. Starting summary for this class.
+
+---
+
+**CS 4750/CS 5750/ECE 4770/MAE 4760 COMBINED Foundations of Robotics (Fall 2025)**  
+**Instructors:** Prof. Tapomayukh Bhattacharjee, Prof. Preston Culbertson  
+**Department:** Cornell University Department of Computer Science
+
+---
+
+### Course Modules & Content
+
+- **Module 1: Introduction and ROS Fundamentals**  
+  - Robotics concepts, Robot Operating System (ROS) basics  
+  - Software setup, workspace management, basic ROS commands  
+  - Files:  
+    - Intro_and_ROS_slides.pdf (1.26 GB)  
+    - Intro_and_ROS_slides_no_videos.pdf  
+
+- **Module 2: Robot Kinematics**  
+  - Forward/inverse kinematics for manipulators  
+  - Homogeneous transformations, coordinate frames  
+  - Mobile robot kinematics: differential drive, bicycle models  
+  - Orientation representations: Euler angles, axis-angle, quaternions  
+  - Files:  
+    - Mobile_Robot_Kinematics.pdf (496 KB)  
+    - Introduction_Kinematics_RigidBodies.pdf  
+    - Sep-9-board-mobile-robot-kinematics.pdf  
+    - Homogeneous_Transforms.pdf (161 KB)  
+    - Sep-18-board-homogeneous-transforms.pdf (1.93 MB)  
+
+- **Module 3: State Estimation**  
+  - Kalman filters, extended Kalman filters  
+  - Particle filters, Monte Carlo localization  
+  - Sensor fusion, probabilistic robotics foundations  
+
+- **Module 4: Motion Planning**  
+  - Path planning: A*, RRT, RRT*  
+  - Trajectory optimization, smoothing  
+  - Obstacle avoidance, collision detection  
+  - Configuration space representation  
+
+- **Module 5: Control**  
+  - PID control, model predictive control  
+  - Feedback linearization, adaptive control methods  
+
+---
+
+### Course Logistics
+
+- **Ed Discussion Platform:**  
+  - Categories: General, Lectures, Sections, Problem Sets, Assignments, Social, Logistics  
+  - 219 students active  
+  - Recent announcements include office hours updates and SSH setup instructions  
+
+- **Office Hours:**  
+  - Pranav Thakkar (STAFF): Rescheduled for Sept 23 & Sept 30  
+  - Preston Culbertson (STAFF): Rescheduled for Sept 15 & Sept 22  
+  - Additional staff available for technical support and VSCode SSH configuration  
+
+---
+
+### Assignments & Deadlines
+
+- **HW 2.1:** Released, due Oct 8, 11:59 PM  
+- **HW 2.2:** To be released Sept 25, due Oct 22  
+- Hardware pick-up scheduled after class on assignment release dates  
+
+---
+
+### Grading Breakdown
+
+- Problem sets and programming assignments: 40%  
+- Midterm exam: 25%  
+- Final project: 25%  
+- Class participation and quizzes: 10%  
+
+---
+
+### Late Policy
+
+- 10% penalty per day late, max 3 days  
+- Extensions granted only for documented emergencies  
+- No submissions accepted after 3-day late window  
+
+---
+
+### Technical Content Highlights
+
+- **Mobile Robot Kinematics Notes:**  
+  - Differential drive and bicycle models govern robot motion via control inputs (wheel velocities, steering angles)  
+  - Kinematic equations relate inputs to configuration space motion  
+
+- **Homogeneous Transforms Lecture (9/18):**  
+  - HW 2.1 out now (due 10/8), HW 2.2 out 9/25 (due 10/22)  
+  - Orientation representations: SO(3) rotation matrices (R ∈ R³×³, R^T R = I, det(R) = +1), Euler angles (intrinsic Z-Y'-X'' and extrinsic Z-Y-X), axis-angle, quaternions (unit norm)  
+  - Robot pick-and-place requires precise coordinate frame transformations  
+
+- **Rigid Motions and Homogeneous Transforms:**  
+  - Rigid body motion preserves distances and angles  
+  - Rigid transform = rotation R ∈ SO(3) + translation t ∈ R³  
+  - Homogeneous coordinates unify rotation and translation in 4×4 matrices  
+  - Essential for forward kinematics and coordinate frame transformations  
+
+---
+
+### Announcements
+
+- Project groups must be finalized by **September 25**  
+- Dataset files posted under Files → Datasets section  
+- Weekly announcements on Canvas and Ed Discussion  
+- Q&A sessions available on Ed Discussion  
+- Hardware distribution aligned with assignment release dates  
+
+---
+
+### Technical Requirements
+
+- ROS environment setup mandatory for programming assignments  
+- Linux VM or native Linux recommended  
+- SSH access configuration required for remote development  
+- Use Git for version control and project submissions  
+- Gradescope used for automated testing and grading  
+
+---
+
+### Additional Resources
+
+- Textbooks:  
+  - *Elements of Statistical Learning in Inference and Information* (Chapters 3-4)  
+  - *Probabilistic Robotics* by Thrun, Burgard, Fox  
+  - *Introduction to Robotics: Mechanics and Control* by Craig  
+  - *Modern Robotics: Mechanics, Planning, and Control* by Lynch and Park  
+
+- Tools:  
+  - Ed Discussion for communication and peer help  
+  - Gradescope for submissions and grading  
+  - Canvas for course materials and announcements  
+  - GitHub/GitLab for version control and collaboration  
+
+---
+
+### Assessment Methods
+
+- Written problem sets (theory focus)  
+- Programming assignments (implement robotics algorithms)  
+- Midterm exam (kinematics, dynamics, control theory)  
+- Final project (robot system design and implementation)  
+- Regular quizzes on key concepts  
+
+---
+
+### Checklist of Actionable Next Steps
+
+- Finalize project groups by **Sept 25**  
+- Complete and submit HW 2.1 by **Oct 8, 11:59 PM**  
+- Prepare for HW 2.2 release on **Sept 25**, due **Oct 22**  
+- Set up ROS environment and SSH access ASAP  
+- Attend office hours on rescheduled dates (Sept 15, 22, 23, 30) for help  
+- Review orientation representations and homogeneous transforms lecture notes  
+- Access datasets from Files → Datasets for project work  
+- Use Ed Discussion for questions and peer support  
+- Use Git and Gradescope for assignment submissions  
+
+---
+
+End of summary for the class that the user is enrolled in, CS 4750/CS 5750/ECE 4770/MAE 4760 COMBINED Foundations of Robotics.
+
+--- COURSE END [GLOBAL] (courses/80462) ---
+

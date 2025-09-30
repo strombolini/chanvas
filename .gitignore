@@ -1,0 +1,9 @@
+.env.local
+local.db
+server_errors.log
+venv/
+__pycache__/
+job_logs
+scrape_stream
+sessions
+stream_out 
