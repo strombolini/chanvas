@@ -985,4 +985,3 @@ def run_canvas_scrape_job(username: str, password: str, headless: bool, status_c
 
     # Do NOT delete tmp_root here; app.py will clean up after embedding
 
-

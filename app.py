@@ -2,11 +2,6 @@
 import os
 import signal
 from zoneinfo import ZoneInfo  # stdlib IANA time zone support
-from dotenv import load_dotenv
-
-# Load environment variables from .env.local
-load_dotenv(".env.local")
-
 import re
 import json
 import uuid
@@ -229,7 +224,17 @@ def login_required(fn):
     import functools
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        if not session.get("user_id"):
+        uid = session.get("user_id")
+        if not uid:
+            return redirect(url_for("login"))
+        # Verify the user still exists; if not, clear session.
+        db = SessionLocal()
+        try:
+            exists = db.query(User.id).filter(User.id == uid).first()
+        finally:
+            db.close()
+        if not exists:
+            session.clear()
             return redirect(url_for("login"))
         return fn(*args, **kwargs)
     return wrapper
@@ -2629,6 +2634,9 @@ def latest_duo():
     db = SessionLocal()
     try:
         u = current_user(db)
+        if not u:
+            # session was present but user vanished; return empty payload
+            return jsonify({"job_id": "", "duo_code": "", "status": ""}), 200
         job = db.query(Job).filter(Job.user_id == u.id).order_by(Job.created_at.desc()).first()
         if not job:
             return jsonify({"job_id": "", "duo_code": "", "status": ""}), 200
@@ -2643,7 +2651,10 @@ def job_state(job_id):
     db = SessionLocal()
     try:
         u = current_user(db)
+        if not u:
+            return jsonify({"status": "", "duo_code": "", "log": ""}), 401
         job = db.query(Job).filter(Job.id == job_id, Job.user_id == u.id).first()
+
         if not job:
             return jsonify({"status": "", "duo_code": "", "log": ""}), 404
         try:
@@ -2670,7 +2681,10 @@ def download_stream(job_id):
     db = SessionLocal()
     try:
         u = current_user(db)
+        if not u:
+            return ocean_layout("Download", "<div class='card'>Not logged in.</div>"), 401
         job = db.query(Job).filter(Job.id == job_id, Job.user_id == u.id).first()
+
         if not job:
             return ocean_layout("Download", "<div class='card'>Job not found.</div>"), 404
         path = _stream_file_path(u.id, job.id)
@@ -2684,8 +2698,6 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
-
-
 
 
 
