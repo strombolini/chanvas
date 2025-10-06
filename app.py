@@ -771,7 +771,7 @@ def compress_raw_text(raw: str, logger_prefix: str = "") -> str:
     # Base threshold
     MAX_CORPUS_TOKENS = 126000
     # Calculate compression ratio
-    compression_ratio = token_size_corpus / MAX_CORPUS_TOKENS
+    compression_ratio = 0.5
     # Calculate chunk number (rounded up + 1)
     import math
     chunk_number = math.ceil(compression_ratio) + 1
@@ -2698,6 +2698,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduler_loop, name="scheduler", daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
