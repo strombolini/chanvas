@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chanvas Scraper Test Console</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #4ec9b0;
+        }
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #005a9e;
+        }
+        button.danger {
+            background: #d16969;
+        }
+        button.danger:hover {
+            background: #a54242;
+        }
+        #output {
+            background: #252526;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+            font-size: 12px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #569cd6;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            display: none;
+        }
+        .status.success {
+            background: #1e341e;
+            border: 1px solid #2d5a2d;
+            color: #4ec9b0;
+        }
+        .status.error {
+            background: #341e1e;
+            border: 1px solid #5a2d2d;
+            color: #d16969;
+        }
+        .status.info {
+            background: #1e2434;
+            border: 1px solid #2d3a5a;
+            color: #569cd6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Chanvas Scraper Test Console</h1>
+
+        <div id="status" class="status"></div>
+
+        <div class="section">
+            <h3>Scraping Controls</h3>
+            <button onclick="startScrape()">▶️ Start Auto-Scrape</button>
+            <button onclick="viewData()">📊 View Scraped Data</button>
+            <button onclick="checkStorage()">💾 Check Storage Usage</button>
+            <button onclick="clearData()" class="danger">🗑️ Clear All Data</button>
+        </div>
+
+        <div class="section">
+            <h3>Quick Tests</h3>
+            <button onclick="testConnection()">🔌 Test Extension Connection</button>
+            <button onclick="listCourses()">📚 List Courses</button>
+            <button onclick="exportData()">📤 Export Data (JSON)</button>
+        </div>
+
+        <div id="output"></div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 5000);
+        }
+
+        async function startScrape() {
+            log('Sending startAutoScrape message...');
+            showStatus('Starting scrape...', 'info');
+
+            chrome.runtime.sendMessage({action: 'startAutoScrape'}, (response) => {
+                if (response && response.success) {
+                    log('✓ Scrape completed successfully!', 'success');
+                    showStatus('✓ Scraping complete!', 'success');
+                } else {
+                    log('✗ Scrape failed: ' + (response?.message || 'Unknown error'), 'error');
+                    showStatus('✗ Scraping failed', 'error');
+                }
+            });
+        }
+
+        async function viewData() {
+            log('Fetching scraped data...');
+
+            chrome.storage.local.get(['canvasData'], (result) => {
+                if (result.canvasData) {
+                    const data = result.canvasData;
+                    log('=== SCRAPED DATA ===');
+                    log(`Version: ${data.version}`);
+                    log(`Last Scraped: ${new Date(data.lastScraped).toLocaleString()}`);
+                    log(`Number of Courses: ${Object.keys(data.courses).length}`);
+                    log('');
+
+                    for (const [courseId, course] of Object.entries(data.courses)) {
+                        log(`📚 ${course.name} (ID: ${courseId})`);
+                        log(`   Pages scraped: ${Object.keys(course.pages).length}`);
+
+                        for (const [pageName, page] of Object.entries(course.pages)) {
+                            log(`   - ${pageName}: ${page.textLength} chars`);
+                        }
+                        log('');
+                    }
+
+                    showStatus('Data loaded successfully', 'success');
+                } else {
+                    log('No scraped data found');
+                    showStatus('No data found', 'error');
+                }
+            });
+        }
+
+        async function checkStorage() {
+            log('Checking storage usage...');
+
+            chrome.storage.local.getBytesInUse(['canvasData'], (bytes) => {
+                const kb = (bytes / 1024).toFixed(2);
+                const mb = (bytes / 1024 / 1024).toFixed(2);
+                const percentUsed = ((bytes / (10 * 1024 * 1024)) * 100).toFixed(2);
+
+                log(`Storage Used: ${bytes} bytes (${kb} KB / ${mb} MB)`);
+                log(`Percentage of 10MB limit: ${percentUsed}%`);
+
+                if (bytes > 8 * 1024 * 1024) {
+                    log('⚠️ WARNING: Approaching storage limit!', 'warning');
+                    showStatus('Warning: Storage almost full', 'error');
+                } else {
+                    showStatus(`Storage: ${percentUsed}% used`, 'success');
+                }
+            });
+        }
+
+        async function clearData() {
+            if (!confirm('Are you sure you want to clear all scraped data?')) {
+                return;
+            }
+
+            log('Clearing scraped data...');
+
+            chrome.runtime.sendMessage({action: 'clearScrapedData'}, (response) => {
+                if (response && response.success) {
+                    log('✓ Data cleared successfully');
+                    showStatus('✓ Data cleared', 'success');
+                } else {
+                    log('✗ Failed to clear data');
+                    showStatus('✗ Failed to clear data', 'error');
+                }
+            });
+        }
+
+        async function testConnection() {
+            log('Testing extension connection...');
+
+            try {
+                chrome.runtime.sendMessage({action: 'getScrapedData'}, (response) => {
+                    if (chrome.runtime.lastError) {
+                        log('✗ Connection failed: ' + chrome.runtime.lastError.message);
+                        showStatus('✗ Connection failed', 'error');
+                    } else {
+                        log('✓ Extension connection successful');
+                        showStatus('✓ Connected', 'success');
+                    }
+                });
+            } catch (error) {
+                log('✗ Error: ' + error.message);
+                showStatus('✗ Error', 'error');
+            }
+        }
+
+        async function listCourses() {
+            log('Listing courses...');
+
+            chrome.storage.local.get(['canvasData'], (result) => {
+                if (result.canvasData && result.canvasData.courses) {
+                    const courses = result.canvasData.courses;
+                    log(`Found ${Object.keys(courses).length} courses:`);
+                    log('');
+
+                    for (const [id, course] of Object.entries(courses)) {
+                        log(`${id}: ${course.name}`);
+                    }
+
+                    showStatus(`${Object.keys(courses).length} courses found`, 'success');
+                } else {
+                    log('No courses found');
+                    showStatus('No courses found', 'error');
+                }
+            });
+        }
+
+        async function exportData() {
+            log('Exporting data...');
+
+            chrome.storage.local.get(['canvasData'], (result) => {
+                if (result.canvasData) {
+                    const json = JSON.stringify(result.canvasData, null, 2);
+                    const blob = new Blob([json], {type: 'application/json'});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `canvas-data-${Date.now()}.json`;
+                    a.click();
+
+                    log('✓ Data exported to JSON file');
+                    showStatus('✓ Data exported', 'success');
+                } else {
+                    log('✗ No data to export');
+                    showStatus('✗ No data to export', 'error');
+                }
+            });
+        }
+
+        // Log on load
+        log('Chanvas Scraper Test Console Ready');
+        log('Click buttons above to test extension functionality');
+        log('');
+    </script>
+</body>
+</html>

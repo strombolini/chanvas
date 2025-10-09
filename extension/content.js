@@ -83,19 +83,45 @@
         }, 5000);
     }
 
+    // Trigger automated scraping
+    async function triggerAutoScrape() {
+        showNotification('Starting automated Canvas scraping...');
+
+        chrome.runtime.sendMessage({
+            action: 'startAutoScrape'
+        }, (response) => {
+            if (response && response.success) {
+                showNotification('✓ Canvas scraping complete! Your courses have been indexed.');
+            } else {
+                showNotification('✗ Scraping failed: ' + (response?.message || 'Unknown error'));
+            }
+        });
+    }
+
+    // Listen for progress updates from background script
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request.action === 'scrapeProgress') {
+            showNotification(request.message);
+        }
+    });
+
     // Main execution
     async function main() {
         if (isLoginSuccessPage()) {
             console.log('Canvas login success detected!');
-            showNotification('Canvas login detected. Capturing session...');
+            showNotification('Canvas login detected. Starting auto-scrape...');
 
-            // Wait a moment for cookies to be set
+            // Wait a moment for cookies to be set and page to settle
             setTimeout(async () => {
                 const cookies = await extractCanvasCookies();
                 console.log('Extracted cookies:', cookies);
 
                 if (cookies.length > 0) {
-                    await sendSessionToChangas(cookies);
+                    // Option 1: Trigger in-browser auto-scraping
+                    await triggerAutoScrape();
+
+                    // Option 2: Also send to backend (optional - can disable)
+                    // await sendSessionToChangas(cookies);
                 } else {
                     console.error('No Canvas cookies found');
                     showNotification('No Canvas session cookies found. Please try logging in again.');
