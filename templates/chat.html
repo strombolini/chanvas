@@ -64,12 +64,18 @@
 
   {% if chunks %}
   <div class="mt">
-    <div class="title" style="font-size:18px">Top snippets used</div>
-    <ul>
-      {% for (t, s) in chunks %}
-        <li class="mut">[{{ loop.index }}] score={{ "%.3f"|format(s) }} — {{ t[:200] }}{% if t|length > 200 %}…{% endif %}</li>
-      {% endfor %}
-    </ul>
+    <div class="title" style="font-size:18px">Context Used</div>
+    <div class="mut">Using {{ chunks.count }} chunks ({{ chunks.total_chars }} characters)</div>
+    <details class="mt">
+      <summary style="cursor:pointer;color:var(--ocean-accent);">Show chunk preview</summary>
+      <div style="margin-top:10px;">
+        {% for chunk_text in chunks.chunks %}
+          <div class="mut" style="margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.2);border-radius:6px;">
+            [{{ loop.index }}] {{ chunk_text[:200] }}{% if chunk_text|length > 200 %}…{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </details>
   </div>
   {% endif %}
 

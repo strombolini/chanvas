@@ -28,7 +28,7 @@ from sqlalchemy import create_engine, text as sql_text
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import PendingRollbackError
 from logging.handlers import RotatingFileHandler
-from models import Base, User, Job, Document, Chunk
+from models import Base, User, Job, Document, Chunk, CourseDoc
 from canvas_scraper import run_canvas_scrape_job, run_canvas_scrape_job_with_cookies
 from config import TEST_SCRAPE_TEXT, TEST_SCRAPE_TEXT_2
 # Optional tokenizer (true token budgeting like local scripts)
@@ -2900,6 +2900,127 @@ def api_session_jobs():
         return jsonify({"jobs": result}), 200
     finally:
         db.close()
+
+@app.route("/api/upload-courses", methods=["POST", "OPTIONS"])
+def api_upload_courses():
+    """
+    Receive course data from browser extension and store in database.
+    For each course:
+    1. Store in CourseDoc table (course metadata + full content)
+    2. Store in Documents table (full scraped content)
+    3. Store in Chunks table (split content with embeddings for retrieval)
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+
+        courses = data.get('courses', [])
+        session_token = data.get('session_token', '')
+
+        if not courses:
+            return jsonify({"error": "No courses provided"}), 400
+
+        if not session_token:
+            return jsonify({"error": "No session token provided"}), 400
+
+        # Generate user ID from session token (same as session-login endpoint)
+        temp_user_id = hash(session_token) % 1000000 + 100000
+
+        db = SessionLocal()
+        try:
+            stored_courses = []
+
+            for course in courses:
+                course_id = course.get('courseId')
+                course_name = course.get('courseName', f'Course {course_id}')
+                content = course.get('content', '')
+
+                if not course_id or not content:
+                    continue
+
+                # 1. Store/update in CourseDoc table
+                existing_course_doc = db.query(CourseDoc).filter(
+                    CourseDoc.user_id == temp_user_id,
+                    CourseDoc.course_id == str(course_id)
+                ).first()
+
+                if existing_course_doc:
+                    existing_course_doc.course_name = course_name
+                    existing_course_doc.content = sanitize_db_text(content)
+                    existing_course_doc.updated_at = datetime.datetime.utcnow()
+                    db.add(existing_course_doc)
+                    action = "updated"
+                else:
+                    course_doc = CourseDoc(
+                        id=uuid.uuid4().hex,
+                        user_id=temp_user_id,
+                        course_id=str(course_id),
+                        course_name=course_name,
+                        content=sanitize_db_text(content),
+                        created_at=datetime.datetime.utcnow(),
+                        updated_at=datetime.datetime.utcnow()
+                    )
+                    db.add(course_doc)
+                    action = "created"
+
+                # 2. Store in Documents table (one document per course)
+                doc_id = uuid.uuid4().hex
+                document = Document(
+                    id=doc_id,
+                    user_id=temp_user_id,
+                    job_id=None,  # No job for extension scrapes
+                    content=sanitize_db_text(content)
+                )
+                db.add(document)
+
+                # 3. Create chunks with embeddings for retrieval
+                chunks_created = 0
+                if content.strip():
+                    # Split content into chunks
+                    text_chunks = chunk_for_embeddings(content, EMBED_MODEL, RETRIEVAL_CHUNK_TOKENS)
+
+                    if text_chunks:
+                        # Generate embeddings for all chunks
+                        embeddings = openai_embed(text_chunks)
+
+                        # Store chunks with embeddings
+                        for i, (chunk_text, embedding) in enumerate(zip(text_chunks, embeddings)):
+                            chunk = Chunk(
+                                id=uuid.uuid4().hex,
+                                document_id=doc_id,
+                                chunk_index=i,
+                                text=sanitize_db_text(chunk_text),
+                                embedding=json.dumps(embedding)
+                            )
+                            db.add(chunk)
+                        chunks_created = len(text_chunks)
+
+                stored_courses.append({
+                    "course_id": course_id,
+                    "course_name": course_name,
+                    "action": action,
+                    "chunks_created": chunks_created
+                })
+
+            db.commit()
+
+            return jsonify({
+                "success": True,
+                "message": f"Stored {len(stored_courses)} courses",
+                "courses": stored_courses,
+                "user_id": temp_user_id
+            }), 200
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(f"Upload courses error: {str(e)}")
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
 # -----------------------------------------------------------------------------
 # Live Duo endpoint for newest job (JSON for polling)

@@ -243,15 +243,16 @@ class CanvasAutoScraper {
         });
     }
 
-    // Save data to chrome.storage.local
+    // Save data to chrome.storage.local and upload to backend
     async saveScrapedData() {
-        return new Promise((resolve, reject) => {
-            const dataToSave = {
-                courses: this.coursesData,
-                lastScraped: Date.now(),
-                version: '2.0'
-            };
+        // Save to local storage first
+        const dataToSave = {
+            courses: this.coursesData,
+            lastScraped: Date.now(),
+            version: '2.0'
+        };
 
+        await new Promise((resolve, reject) => {
             chrome.storage.local.set({ canvasData: dataToSave }, () => {
                 if (chrome.runtime.lastError) {
                     reject(chrome.runtime.lastError);
@@ -261,6 +262,80 @@ class CanvasAutoScraper {
                 }
             });
         });
+
+        // Upload to backend
+        await this.uploadToBackend();
+    }
+
+    // Upload course data to backend API
+    async uploadToBackend() {
+        try {
+            this.sendProgress('Uploading courses to backend...');
+
+            // Get Chanvas URL from extension storage
+            const config = await new Promise((resolve) => {
+                chrome.storage.sync.get(['chanvasUrl'], (result) => {
+                    resolve(result);
+                });
+            });
+            const chanvasUrl = config.chanvasUrl || 'http://localhost:8000';
+
+            // Generate session token from cookies
+            const cookies = await new Promise((resolve) => {
+                chrome.cookies.getAll({ domain: '.cornell.edu' }, (cookies) => {
+                    resolve(cookies);
+                });
+            });
+            const sessionToken = JSON.stringify(cookies);
+
+            // Format courses for upload
+            const coursesArray = Object.keys(this.coursesData).map(courseId => {
+                const course = this.coursesData[courseId];
+
+                // Combine all page content into a single text
+                let combinedContent = `Course: ${course.name} (ID: ${courseId})\n\n`;
+
+                for (const pageName in course.pages) {
+                    const page = course.pages[pageName];
+                    combinedContent += `\n=== ${pageName.toUpperCase()} ===\n`;
+                    combinedContent += `URL: ${page.url}\n\n`;
+                    combinedContent += page.content;
+                    combinedContent += '\n\n';
+                }
+
+                return {
+                    courseId: courseId,
+                    courseName: course.name,
+                    content: combinedContent
+                };
+            });
+
+            // Upload to backend
+            const response = await fetch(`${chanvasUrl}/api/upload-courses`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    courses: coursesArray,
+                    session_token: sessionToken
+                })
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                console.log('[SCRAPER] Upload successful:', result);
+                this.sendProgress(`✓ Uploaded ${result.courses.length} courses to backend`);
+            } else {
+                const error = await response.text();
+                console.error('[SCRAPER] Upload failed:', error);
+                this.sendProgress('⚠ Upload to backend failed - data saved locally');
+            }
+
+        } catch (error) {
+            console.error('[SCRAPER] Upload error:', error);
+            this.sendProgress('⚠ Upload to backend failed - data saved locally');
+        }
     }
 
     // Get scraped data

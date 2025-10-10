@@ -45,3 +45,16 @@ class Chunk(Base):
     text = Column(Text)
     embedding = Column(Text)  # JSON-serialized list[float] for portability
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+"""Stores individual course documents from browser extension scraping.
+  Each course is stored as a separate document with its Canvas course ID."""
+class CourseDoc(Base):
+    __tablename__ = "course_docs"
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    course_id = Column(String(64), index=True, nullable=False)  # Canvas course ID
+    course_name = Column(String(255))  # Human-readable course name
+    content = Column(Text)  # Raw scraped content for this course
+    embedding = Column(Text)  # JSON-serialized embedding vector for the entire course
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
