@@ -272,15 +272,16 @@ class CanvasAutoScraper {
         try {
             this.sendProgress('Uploading courses to backend...');
 
-            // Get Chanvas URL from extension storage
+            // Get Chanvas URL and user email from extension storage
             const config = await new Promise((resolve) => {
-                chrome.storage.sync.get(['chanvasUrl'], (result) => {
+                chrome.storage.sync.get(['chanvasUrl', 'userEmail'], (result) => {
                     resolve(result);
                 });
             });
             const chanvasUrl = config.chanvasUrl || 'http://localhost:8000';
+            const userEmail = config.userEmail; // User's Cornell email from OAuth
 
-            // Generate session token from cookies
+            // Generate session token from cookies (fallback if no OAuth)
             const cookies = await new Promise((resolve) => {
                 chrome.cookies.getAll({ domain: '.cornell.edu' }, (cookies) => {
                     resolve(cookies);
@@ -318,7 +319,8 @@ class CanvasAutoScraper {
                 },
                 body: JSON.stringify({
                     courses: coursesArray,
-                    session_token: sessionToken
+                    session_token: sessionToken,
+                    user_email: userEmail // Pass OAuth email if available
                 })
             });
 

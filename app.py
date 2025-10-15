@@ -44,6 +44,19 @@ import requests
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
 
+# OAuth setup
+from authlib.integrations.flask_client import OAuth
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+    client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={
+        'scope': 'openid email profile'
+    }
+)
+
 # Add CORS headers to allow browser extension requests
 @app.after_request
 def after_request(response):
@@ -2255,6 +2268,13 @@ def signup():
         body = f"""
 <div class="card">
   <h2>Sign up</h2>
+
+  <a href="/signup/google" class="btn" style="display:block;text-align:center;background:#4285f4;color:white;text-decoration:none;margin-bottom:20px;">
+    🎓 Sign up with Cornell Gmail
+  </a>
+
+  <div style="text-align:center;color:var(--muted);margin:20px 0;">or</div>
+
   <form method="post">
     <label>Username</label>
     <input name="username" placeholder="netid" />
@@ -2285,6 +2305,13 @@ def login():
         body = f"""
 <div class="card">
   <h2>Log in</h2>
+
+  <a href="/login/google" class="btn" style="display:block;text-align:center;background:#4285f4;color:white;text-decoration:none;margin-bottom:20px;">
+    🎓 Sign in with Cornell Gmail
+  </a>
+
+  <div style="text-align:center;color:var(--muted);margin:20px 0;">or</div>
+
   <form method="post">
     <label>Username</label>
     <input name="username" placeholder="netid" />
@@ -2299,6 +2326,102 @@ def login():
         return ocean_layout("Log in â€¢ Ocean Canvas Assistant", body)
     finally:
         db.close()
+
+@app.route("/signup/google")
+def signup_google():
+    redirect_uri = url_for("signup_callback", _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route("/signup/callback")
+def signup_callback():
+    db = SessionLocal()
+    try:
+        token = google.authorize_access_token()
+        user_info = token.get('userinfo')
+
+        if not user_info:
+            body = "<div class='card'>Failed to get user info from Google. <a href='/signup'>Try again</a></div>"
+            return ocean_layout("Signup Error", body), 400
+
+        email = user_info.get('email', '').lower()
+
+        # Restrict to Cornell emails only
+        if not email.endswith('@cornell.edu'):
+            body = "<div class='card'>Only Cornell email addresses (@cornell.edu) are allowed. <a href='/signup'>Back</a></div>"
+            return ocean_layout("Access Denied", body), 403
+
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            body = "<div class='card'>An account with this email already exists. <a href='/login'>Log in instead</a></div>"
+            return ocean_layout("Account Exists", body), 400
+
+        # Create new user from OAuth
+        netid = email.split('@')[0]
+        user = User(
+            username=netid,
+            netid=netid,
+            email=email,
+            oauth_provider='google',
+            password_hash=None,
+            created_at=datetime.datetime.utcnow()
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        # Log in the user
+        session["user_id"] = user.id
+        return redirect(url_for("dashboard"))
+
+    except Exception as e:
+        logger.error(f"OAuth signup error: {str(e)}")
+        body = f"<div class='card'>Signup failed: {str(e)}. <a href='/signup'>Try again</a></div>"
+        return ocean_layout("Signup Error", body), 500
+    finally:
+        db.close()
+
+@app.route("/login/google")
+def login_google():
+    redirect_uri = url_for("login_callback", _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route("/login/callback")
+def login_callback():
+    db = SessionLocal()
+    try:
+        token = google.authorize_access_token()
+        user_info = token.get('userinfo')
+
+        if not user_info:
+            body = "<div class='card'>Failed to get user info from Google. <a href='/login'>Try again</a></div>"
+            return ocean_layout("Login Error", body), 400
+
+        email = user_info.get('email', '').lower()
+
+        # Restrict to Cornell emails only
+        if not email.endswith('@cornell.edu'):
+            body = "<div class='card'>Only Cornell email addresses (@cornell.edu) are allowed. <a href='/login'>Back</a></div>"
+            return ocean_layout("Access Denied", body), 403
+
+        # Find existing user (do NOT auto-create)
+        user = db.query(User).filter(User.email == email).first()
+
+        if not user:
+            body = "<div class='card'>No account found with this email. <a href='/signup'>Sign up first</a></div>"
+            return ocean_layout("Account Not Found", body), 404
+
+        # Log in the user
+        session["user_id"] = user.id
+        return redirect(url_for("dashboard"))
+
+    except Exception as e:
+        logger.error(f"OAuth callback error: {str(e)}")
+        body = f"<div class='card'>Login failed: {str(e)}. <a href='/login'>Try again</a></div>"
+        return ocean_layout("Login Error", body), 500
+    finally:
+        db.close()
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -2920,18 +3043,32 @@ def api_upload_courses():
 
         courses = data.get('courses', [])
         session_token = data.get('session_token', '')
+        user_email = data.get('user_email', '')  # OAuth email from extension
 
         if not courses:
             return jsonify({"error": "No courses provided"}), 400
 
-        if not session_token:
-            return jsonify({"error": "No session token provided"}), 400
-
-        # Generate user ID from session token (same as session-login endpoint)
-        temp_user_id = hash(session_token) % 1000000 + 100000
-
         db = SessionLocal()
         try:
+            # If user_email provided, find the OAuth user
+            if user_email and user_email.endswith('@cornell.edu'):
+                user = db.query(User).filter(User.email == user_email).first()
+                if user:
+                    user_id = user.id
+                    logger.info(f"Found OAuth user for email {user_email}: user_id={user_id}")
+                else:
+                    # User must sign up first
+                    return jsonify({
+                        "error": "No account found. Please sign up first at the website.",
+                        "signup_required": True
+                    }), 403
+            else:
+                # Fallback: Generate temp user ID from session token
+                if not session_token:
+                    return jsonify({"error": "No session token or user email provided"}), 400
+                user_id = hash(session_token) % 1000000 + 100000
+                logger.info(f"Using temp user_id={user_id} (no OAuth email)")
+
             stored_courses = []
 
             for course in courses:
@@ -2944,7 +3081,7 @@ def api_upload_courses():
 
                 # 1. Store/update in CourseDoc table
                 existing_course_doc = db.query(CourseDoc).filter(
-                    CourseDoc.user_id == temp_user_id,
+                    CourseDoc.user_id == user_id,
                     CourseDoc.course_id == str(course_id)
                 ).first()
 
@@ -2957,7 +3094,7 @@ def api_upload_courses():
                 else:
                     course_doc = CourseDoc(
                         id=uuid.uuid4().hex,
-                        user_id=temp_user_id,
+                        user_id=user_id,
                         course_id=str(course_id),
                         course_name=course_name,
                         content=sanitize_db_text(content),
@@ -2971,7 +3108,7 @@ def api_upload_courses():
                 doc_id = uuid.uuid4().hex
                 document = Document(
                     id=doc_id,
-                    user_id=temp_user_id,
+                    user_id=user_id,
                     job_id=None,  # No job for extension scrapes
                     content=sanitize_db_text(content)
                 )
@@ -3012,7 +3149,7 @@ def api_upload_courses():
                 "success": True,
                 "message": f"Stored {len(stored_courses)} courses",
                 "courses": stored_courses,
-                "user_id": temp_user_id
+                "user_id": user_id
             }), 200
 
         finally:

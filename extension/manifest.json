@@ -8,7 +8,8 @@
     "cookies",
     "storage",
     "tabs",
-    "scripting"
+    "scripting",
+    "identity"
   ],
   "host_permissions": [
     "https://canvas.cornell.edu/*",
@@ -16,6 +17,14 @@
     "https://*.herokuapp.com/*",
     "https://api.openai.com/*"
   ],
+  "oauth2": {
+    "client_id": "10071843125-tdqo7fsjmut8p1p5gfc6v47rsrl4tcjt.apps.googleusercontent.com",
+    "scopes": [
+      "openid",
+      "email",
+      "profile"
+    ]
+  },
   "content_scripts": [
     {
       "matches": ["https://canvas.cornell.edu/*"],

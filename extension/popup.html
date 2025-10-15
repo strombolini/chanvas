@@ -98,20 +98,40 @@
 
     <div id="status" style="display: none;"></div>
 
-    <div class="section">
-        <label for="chanvasUrl">Chanvas Server URL:</label>
-        <input type="text" id="chanvasUrl" placeholder="http://localhost:8000" />
+    <!-- User Info Section (shown when logged in) -->
+    <div id="userInfo" style="display: none;" class="status info">
+        <strong>Signed in as:</strong><br>
+        <span id="userEmail"></span>
     </div>
 
-    <button id="saveSettings" class="btn">Save Settings</button>
-    <button id="testConnection" class="btn secondary">Test Connection</button>
+    <!-- Login Section (shown when not logged in) -->
+    <div id="loginSection">
+        <button id="googleSignIn" class="btn" style="background: #4285f4;">
+            🎓 Sign in with Cornell Gmail
+        </button>
+        <div style="text-align: center; font-size: 11px; color: #666; margin: 10px 0;">
+            Sign in to sync your courses
+        </div>
+    </div>
+
+    <!-- Settings Section (shown when logged in) -->
+    <div id="settingsSection" style="display: none;">
+        <div class="section">
+            <label for="chanvasUrl">Chanvas Server URL:</label>
+            <input type="text" id="chanvasUrl" placeholder="http://localhost:8000" />
+        </div>
+
+        <button id="saveSettings" class="btn">Save Settings</button>
+        <button id="testConnection" class="btn secondary">Test Connection</button>
+        <button id="signOut" class="btn secondary">Sign Out</button>
+    </div>
 
     <div class="instructions">
         <strong>How to use:</strong><br>
-        1. Set your Chanvas server URL above<br>
-        2. Log into Canvas normally<br>
-        3. Extension will automatically detect login and start scraping<br>
-        4. Check Chanvas dashboard for progress
+        1. Sign in with your Cornell Gmail<br>
+        2. Set your Chanvas server URL<br>
+        3. Log into Canvas normally<br>
+        4. Extension will automatically scrape your courses
     </div>
 
     <script src="popup.js"></script>

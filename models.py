@@ -10,7 +10,10 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(255), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
+    netid = Column(String(255), unique=True, index=True, nullable=True)  # Cornell NetID
+    password_hash = Column(String(255), nullable=True)  # Nullable for OAuth users
+    email = Column(String(255), unique=True, index=True, nullable=True)  # For OAuth
+    oauth_provider = Column(String(64))  # 'google' for Cornell Gmail
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 """Represents a single Canvas scraping task with status tracking and logs. Each job
