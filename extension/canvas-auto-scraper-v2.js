@@ -45,6 +45,17 @@ class CanvasAutoScraper {
             this.sendProgress('Saving data...');
             await this.saveScrapedData();
 
+            // Step 4: Index data for RAG
+            this.sendProgress('Indexing data for semantic search...');
+            try {
+                const rag = new ExtensionRAG();
+                await rag.indexScrapedData(this.coursesData);
+                this.sendProgress('✓ Data indexed for RAG');
+            } catch (error) {
+                console.error('[SCRAPER] Failed to index data:', error);
+                this.sendProgress('⚠ Indexing failed, but data saved locally');
+            }
+
             console.log('[SCRAPER] Automated scraping complete!');
             this.sendProgress('✓ Scraping complete!');
             this.scrapingInProgress = false;
@@ -263,81 +274,8 @@ class CanvasAutoScraper {
             });
         });
 
-        // Upload to backend
-        await this.uploadToBackend();
-    }
-
-    // Upload course data to backend API
-    async uploadToBackend() {
-        try {
-            this.sendProgress('Uploading courses to backend...');
-
-            // Get Chanvas URL and user email from extension storage
-            const config = await new Promise((resolve) => {
-                chrome.storage.sync.get(['chanvasUrl', 'userEmail'], (result) => {
-                    resolve(result);
-                });
-            });
-            const chanvasUrl = config.chanvasUrl || 'http://localhost:8000';
-            const userEmail = config.userEmail; // User's Cornell email from OAuth
-
-            // Generate session token from cookies (fallback if no OAuth)
-            const cookies = await new Promise((resolve) => {
-                chrome.cookies.getAll({ domain: '.cornell.edu' }, (cookies) => {
-                    resolve(cookies);
-                });
-            });
-            const sessionToken = JSON.stringify(cookies);
-
-            // Format courses for upload
-            const coursesArray = Object.keys(this.coursesData).map(courseId => {
-                const course = this.coursesData[courseId];
-
-                // Combine all page content into a single text
-                let combinedContent = `Course: ${course.name} (ID: ${courseId})\n\n`;
-
-                for (const pageName in course.pages) {
-                    const page = course.pages[pageName];
-                    combinedContent += `\n=== ${pageName.toUpperCase()} ===\n`;
-                    combinedContent += `URL: ${page.url}\n\n`;
-                    combinedContent += page.content;
-                    combinedContent += '\n\n';
-                }
-
-                return {
-                    courseId: courseId,
-                    courseName: course.name,
-                    content: combinedContent
-                };
-            });
-
-            // Upload to backend
-            const response = await fetch(`${chanvasUrl}/api/upload-courses`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    courses: coursesArray,
-                    session_token: sessionToken,
-                    user_email: userEmail // Pass OAuth email if available
-                })
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                console.log('[SCRAPER] Upload successful:', result);
-                this.sendProgress(`✓ Uploaded ${result.courses.length} courses to backend`);
-            } else {
-                const error = await response.text();
-                console.error('[SCRAPER] Upload failed:', error);
-                this.sendProgress('⚠ Upload to backend failed - data saved locally');
-            }
-
-        } catch (error) {
-            console.error('[SCRAPER] Upload error:', error);
-            this.sendProgress('⚠ Upload to backend failed - data saved locally');
-        }
+        // Data saved locally - no upload needed
+        this.sendProgress('✓ Data saved locally in browser storage');
     }
 
     // Get scraped data

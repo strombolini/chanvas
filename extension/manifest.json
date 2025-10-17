@@ -9,27 +9,24 @@
     "storage",
     "tabs",
     "scripting",
-    "identity"
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://canvas.cornell.edu/*",
     "http://localhost:*/*",
-    "https://*.herokuapp.com/*",
-    "https://api.openai.com/*"
+    "https://*.herokuapp.com/*"
   ],
-  "oauth2": {
-    "client_id": "10071843125-tdqo7fsjmut8p1p5gfc6v47rsrl4tcjt.apps.googleusercontent.com",
-    "scopes": [
-      "openid",
-      "email",
-      "profile"
-    ]
-  },
   "content_scripts": [
     {
       "matches": ["https://canvas.cornell.edu/*"],
       "js": ["content.js"],
       "run_at": "document_end"
+    },
+    {
+      "matches": ["http://localhost:*/*", "http://127.0.0.1:*/*", "https://*.herokuapp.com/*"],
+      "js": ["webapp-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
     }
   ],
   "background": {

@@ -109,25 +109,6 @@
     async function main() {
         if (isLoginSuccessPage()) {
             console.log('Canvas login success detected!');
-
-            // Check if user is signed into the extension first
-            const result = await new Promise((resolve) => {
-                chrome.storage.sync.get(['isLoggedIn', 'userEmail'], (data) => {
-                    resolve(data);
-                });
-            });
-
-            console.log('Extension login status:', result);
-            console.log('isLoggedIn:', result.isLoggedIn, 'type:', typeof result.isLoggedIn);
-            console.log('userEmail:', result.userEmail);
-
-            if (!result.isLoggedIn || !result.userEmail) {
-                console.log('User not signed into extension - skipping auto-scrape');
-                showNotification('Please sign into the Chanvas extension first to enable automatic scraping.');
-                return;
-            }
-
-            console.log('User signed in as:', result.userEmail);
             showNotification('Canvas login detected. Starting auto-scrape...');
 
             // Wait a moment for cookies to be set and page to settle
@@ -136,11 +117,8 @@
                 console.log('Extracted cookies:', cookies);
 
                 if (cookies.length > 0) {
-                    // Option 1: Trigger in-browser auto-scraping
+                    // Trigger in-browser auto-scraping
                     await triggerAutoScrape();
-
-                    // Option 2: Also send to backend (optional - can disable)
-                    // await sendSessionToChangas(cookies);
                 } else {
                     console.error('No Canvas cookies found');
                     showNotification('No Canvas session cookies found. Please try logging in again.');

@@ -1,6 +1,6 @@
 // Background script to handle cookie extraction, messaging, and auto-scraping
-// Import the auto-scraper (note: will need to add to manifest.json)
-importScripts('canvas-auto-scraper-v2.js');
+// Import the auto-scraper and RAG system
+importScripts('canvas-auto-scraper-v2.js', 'rag.js');
 
 // Initialize the scraper
 const scraper = new CanvasAutoScraper();
@@ -99,5 +99,8 @@ chrome.runtime.onInstalled.addListener((details) => {
         chrome.storage.sync.set({
             chanvasUrl: 'http://localhost:8000'
         });
+
+        // Note: User needs to manually enter OpenAI API key in popup settings
+        console.log('Please configure your OpenAI API key in the extension popup');
     }
 });

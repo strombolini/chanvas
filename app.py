@@ -2736,25 +2736,45 @@ def chat():
     try:
         u = current_user(db)
 
-        def _load_context_text() -> str:
+        def _load_context_text(canvas_data_json: str = None) -> str:
             """
-            Load the entire compressed document content for the current user.
+            Load context from extension's localStorage (preferred) or fallback to database.
 
-            This function loads the full compressed/summarized document that serves
-            as context for all chat queries. It does NOT perform selective retrieval.
+            Args:
+                canvas_data_json: JSON string from extension's chrome.storage.local
 
             Returns:
-                str: Full compressed document text, or empty string if none found
+                str: Combined course content text
 
             Process:
-                1. Gets the user's most recent job (scraping/processing job)
-                2. Tries to load from stream file (compressed output from job)
-                3. Fallback: loads from Document table if stream file missing
-                4. Returns entire content as a single string
-
-            Note: This is called for every chat message, loading the complete
-            document context rather than relevant chunks.
+                1. If canvas_data provided from extension, parse and combine all courses
+                2. Fallback: Load from database (old method)
             """
+            # Try loading from extension data first
+            if canvas_data_json:
+                try:
+                    canvas_data = json.loads(canvas_data_json)
+                    courses = canvas_data.get('courses', {})
+
+                    if courses:
+                        combined_text = ""
+                        for course_id, course_info in courses.items():
+                            combined_text += f"\n\n{'='*80}\n"
+                            combined_text += f"COURSE: {course_info.get('name', 'Unknown')} (ID: {course_id})\n"
+                            combined_text += f"{'='*80}\n\n"
+
+                            pages = course_info.get('pages', {})
+                            for page_name, page_data in pages.items():
+                                combined_text += f"\n--- {page_name.upper()} ---\n"
+                                combined_text += page_data.get('content', '')
+                                combined_text += "\n\n"
+
+                        logger.info(f"[CHAT] Loaded {len(courses)} courses from extension localStorage")
+                        return combined_text.strip()
+                except Exception as e:
+                    logger.error(f"[CHAT] Failed to parse extension data: {e}")
+
+            # Fallback to database method
             last_job = latest_job_for_user(db, u.id)
             if last_job:
                 stream_path = _stream_file_path(u.id, last_job.id)
@@ -2762,12 +2782,15 @@ def chat():
                     with open(stream_path, "r", encoding="utf-8", errors="ignore") as f:
                         s = f.read().strip()
                         if s:
+                            logger.info("[CHAT] Loaded context from stream file (database fallback)")
                             return s
             # fallback to DB-backed Document
             doc_id = latest_document_id(db, u.id)
             if doc_id:
                 row = db.query(Document).filter(Document.id == doc_id).first()
+                logger.info("[CHAT] Loaded context from Document table (database fallback)")
                 return (row.content or "").strip()
+
             return ""
 
         # 1) Load saved classes.json (if present)
@@ -2805,12 +2828,15 @@ def chat():
         gen_mode = None
 
         if request.method == "POST":
+            # Get canvas data from extension (if provided)
+            canvas_data_json = request.form.get("canvas_data") or None
+
             # Generation buttons submit
             selected_course = (request.form.get("gen_course") or "").strip()
             gen_mode = (request.form.get("gen_mode") or "").strip()
 
             if selected_course:
-                corpus = _load_context_text()
+                corpus = _load_context_text(canvas_data_json)
                 if corpus:
                     if gen_mode == "practice":
                         practice = generate_practice_test(selected_course, corpus)
@@ -2838,39 +2864,134 @@ def chat():
                     hist = []
                 prev_user_msgs = hist[:]
 
-                # Use semantic search to get relevant chunks instead of entire document
-                doc_id = latest_document_id(db, u.id)
-                total_chunks = count_chunks_for_user(db, u.id)
+                # Check if pre-computed RAG index is provided from extension
+                rag_index_json = request.form.get("rag_index") or None
 
-                if not doc_id:
-                    answer = "No documents found yet. Start a scrape or test scrape."
-                elif total_chunks == 0:
-                    answer = f"No chunks found in database. Document ID: {doc_id}. You may need to reprocess your documents to create chunks."
-                else:
-                    # Calculate token budget for context (reserve space for question and response)
-                    context_budget = MODEL_CONTEXT_TOKENS - 2000  # Reserve 2000 tokens for question/response
-                    context_text = retrieve_context(db, doc_id, question, TOP_K, context_budget)
-                    if not context_text:
-                        answer = "No relevant context found for your question."
-                        chunks = None
-                    else:
-                        # Log chunk previews being used as context
-                        chunk_list = context_text.split('\n\n') if context_text else []
-                        logger.info(f"[CHAT DEBUG] Question: {question[:100]}...")
-                        logger.info(f"[CHAT DEBUG] Using {len(chunk_list)} most relevant chunks ({len(context_text)} chars total)")
-                        for i, chunk in enumerate(chunk_list):
-                            preview = chunk[:200].replace('\n', ' ')
-                            logger.info(f"[CHAT DEBUG] Chunk {i+1}: {preview}...")
+                if rag_index_json:
+                    # Use pre-computed embeddings from extension
+                    try:
+                        logger.info(f"[CHAT] Using pre-computed RAG index from extension")
+                        rag_index = json.loads(rag_index_json)
 
+                        indexed_chunks = rag_index.get('chunks', [])
+                        indexed_embeddings = rag_index.get('embeddings', [])
+
+                        if not indexed_chunks or not indexed_embeddings:
+                            raise Exception("RAG index is empty")
+
+                        logger.info(f"[CHAT] Question: {question[:100]}...")
+                        logger.info(f"[CHAT] Using {len(indexed_chunks)} pre-indexed chunks")
+
+                        # 1. Embed the question only
+                        question_embedding = openai_embed([question])
+                        if not question_embedding:
+                            raise Exception("Failed to embed question")
+                        qvec = question_embedding[0]
+
+                        # 2. Calculate similarity with pre-computed embeddings
+                        scored_chunks = []
+                        for i, (chunk_text, chunk_emb) in enumerate(zip(indexed_chunks, indexed_embeddings)):
+                            similarity = cosine_sim(qvec, chunk_emb)
+                            scored_chunks.append((similarity, chunk_text))
+
+                        # 3. Sort by similarity and get top-k
+                        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                        top_chunks = [text for _, text in scored_chunks[:TOP_K]]
+                        top_scores = [score for score, _ in scored_chunks[:TOP_K]]
+
+                        # 4. Combine top chunks as context
+                        context_text = "\n\n".join(top_chunks)
+
+                        # 5. Truncate to fit within token budget
+                        context_budget = MODEL_CONTEXT_TOKENS - 3000
+                        context_text = truncate_to_tokens(context_text, context_budget, CHAT_MODEL)
+
+                        logger.info(f"[CHAT] Using top {len(top_chunks)} chunks ({len(context_text)} chars)")
+                        logger.info(f"[CHAT] Top similarities: {[f'{s:.3f}' for s in top_scores[:3]]}")
+
+                        # 6. Generate answer with retrieved context
                         answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
 
-                        # Store chunks for debug display
+                        # Store info for debug display
                         chunks = {
-                            'count': len(chunk_list),
+                            'count': len(top_chunks),
                             'total_chars': len(context_text),
-                            'preview': context_text[:800] + '...' if len(context_text) > 800 else context_text,
-                            'chunks': chunk_list[:3]  # Show first 3 chunks
+                            'scores': top_scores[:5],
+                            'chunks': [chunk[:200] + '...' for chunk in top_chunks[:5]]
                         }
+
+                    except Exception as e:
+                        logger.error(f"[CHAT] RAG with pre-computed index error: {e}")
+                        log_exception("chat_rag_precomputed", e)
+                        answer = f"Error using pre-computed index: {str(e)}. Try re-indexing your data."
+                        chunks = None
+
+                else:
+                    # Fallback: Load context and compute embeddings on-the-fly (slower)
+                    full_context = _load_context_text(canvas_data_json)
+
+                    if not full_context:
+                        answer = "No course data found. Please scrape your Canvas courses using the extension or start a scrape job."
+                        chunks = None
+                    else:
+                        try:
+                            # RAG: Use semantic search (compute embeddings on demand)
+                            logger.info(f"[CHAT] Question: {question[:100]}...")
+                            logger.info(f"[CHAT] Full context: {len(full_context)} chars (computing embeddings on-the-fly)")
+
+                            # 1. Split full context into chunks for embedding
+                            text_chunks = chunk_for_embeddings(full_context, EMBED_MODEL, RETRIEVAL_CHUNK_TOKENS)
+                            logger.info(f"[CHAT] Split into {len(text_chunks)} chunks")
+
+                            if not text_chunks:
+                                answer = "No content to search. Please try scraping again."
+                                chunks = None
+                            else:
+                                # 2. Embed the question
+                                question_embedding = openai_embed([question])
+                                if not question_embedding:
+                                    raise Exception("Failed to embed question")
+                                qvec = question_embedding[0]
+
+                                # 3. Embed all chunks (expensive!)
+                                logger.info(f"[CHAT] Generating embeddings for {len(text_chunks)} chunks...")
+                                chunk_embeddings = openai_embed(text_chunks)
+
+                                # 4. Calculate similarity scores
+                                scored_chunks = []
+                                for chunk_text, chunk_emb in zip(text_chunks, chunk_embeddings):
+                                    similarity = cosine_sim(qvec, chunk_emb)
+                                    scored_chunks.append((similarity, chunk_text))
+
+                                # 5. Sort by similarity and get top-k
+                                scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                                top_chunks = [text for _, text in scored_chunks[:TOP_K]]
+
+                                # 6. Combine top chunks as context
+                                context_text = "\n\n".join(top_chunks)
+
+                                # 7. Truncate to fit within token budget
+                                context_budget = MODEL_CONTEXT_TOKENS - 3000
+                                context_text = truncate_to_tokens(context_text, context_budget, CHAT_MODEL)
+
+                                logger.info(f"[CHAT] Using top {len(top_chunks)} chunks: {len(context_text)} chars")
+
+                                # 8. Generate answer with retrieved context
+                                answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
+
+                                # Store info for debug display
+                                chunks = {
+                                    'count': len(top_chunks),
+                                    'total_chars': len(context_text),
+                                    'chunks': [chunk[:200] + '...' for chunk in top_chunks[:3]]
+                                }
+
+                        except Exception as e:
+                            logger.error(f"[CHAT] RAG error: {e}")
+                            log_exception("chat_rag", e)
+                            answer = f"Error processing question: {str(e)}. Try asking a simpler question or check if your courses are scraped."
+                            chunks = None
+
                 hist.append(question)
                 if len(hist) > 20:
                     hist = hist[-20:]
