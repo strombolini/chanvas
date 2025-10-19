@@ -105,8 +105,26 @@
         }
     });
 
+    // Check if this tab is in a scraping window
+    async function isScrapingWindow() {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage({
+                action: 'isScrapingWindow'
+            }, (response) => {
+                resolve(response?.isScraping || false);
+            });
+        });
+    }
+
     // Main execution
     async function main() {
+        // Don't trigger auto-scrape if we're already in a scraping window
+        const inScrapingWindow = await isScrapingWindow();
+        if (inScrapingWindow) {
+            console.log('[CONTENT] In scraping window, skipping auto-trigger');
+            return;
+        }
+
         if (isLoginSuccessPage()) {
             console.log('Canvas login success detected!');
             showNotification('Canvas login detected. Starting auto-scrape...');

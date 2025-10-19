@@ -30,25 +30,88 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'startAutoScrape') {
         console.log('Received startAutoScrape request');
 
-        // Progress callback to send updates back to content script
-        const progressCallback = (message) => {
-            // Send progress update to the requesting tab
-            if (sender.tab) {
-                chrome.tabs.sendMessage(sender.tab.id, {
-                    action: 'scrapeProgress',
-                    message: message
-                }).catch(() => {
-                    // Ignore errors if content script isn't listening
-                });
-            }
-        };
+        // Check if we should create a new window or use existing tab
+        const createNewWindow = request.createNewWindow !== false; // Default true
 
-        scraper.startAutoScrape(progressCallback).then(() => {
-            sendResponse({ success: true, message: 'Scraping complete' });
-        }).catch((error) => {
-            sendResponse({ success: false, message: error.message });
+        if (!createNewWindow) {
+            // Simple mode: scrape in current context
+            const progressCallback = (message) => {
+                if (sender.tab) {
+                    chrome.tabs.sendMessage(sender.tab.id, {
+                        action: 'scrapeProgress',
+                        message: message
+                    }).catch(() => {});
+                }
+            };
+
+            scraper.startAutoScrape(progressCallback, null).then(() => {
+                sendResponse({ success: true, message: 'Scraping complete' });
+            }).catch((error) => {
+                sendResponse({ success: false, message: error.message });
+            });
+
+            return true;
+        }
+
+        // New window mode: create dedicated scraping window
+        const originalTabId = sender.tab?.id;
+
+        // Create a new window for scraping, starting at Canvas dashboard
+        chrome.windows.create({
+            url: 'https://canvas.cornell.edu/',
+            type: 'normal',
+            focused: false,
+            width: 800,
+            height: 600
+        }, (newWindow) => {
+            const newTabId = newWindow.tabs[0].id;
+            console.log(`[BACKGROUND] Created scraping window ${newWindow.id} with tab ${newTabId}`);
+
+            // Mark this window as a scraping window to prevent re-triggering
+            chrome.storage.local.set({
+                [`scrapingWindow_${newWindow.id}`]: true
+            });
+
+            const progressCallback = (message) => {
+                // Only send to original tab
+                if (originalTabId) {
+                    chrome.tabs.sendMessage(originalTabId, {
+                        action: 'scrapeProgress',
+                        message: message
+                    }).catch(() => {});
+                }
+            };
+
+            // Wait for the new tab to load before starting scrape
+            chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
+                if (tabId === newTabId && changeInfo.status === 'complete') {
+                    chrome.tabs.onUpdated.removeListener(listener);
+
+                    // Small delay to ensure page is fully ready
+                    setTimeout(() => {
+                        scraper.startAutoScrape(progressCallback, newWindow.id).then(() => {
+                            sendResponse({ success: true, message: 'Scraping complete' });
+
+                            // Clean up marker
+                            chrome.storage.local.remove(`scrapingWindow_${newWindow.id}`);
+
+                            // Close the scraping window after completion
+                            chrome.windows.remove(newWindow.id).catch((err) => {
+                                console.log('[BACKGROUND] Could not close scraping window:', err);
+                            });
+                        }).catch((error) => {
+                            sendResponse({ success: false, message: error.message });
+
+                            // Clean up and close window on error
+                            chrome.storage.local.remove(`scrapingWindow_${newWindow.id}`);
+                            chrome.windows.remove(newWindow.id).catch(() => {});
+                        });
+                    }, 500);
+                }
+            });
         });
-        return true; // Will respond asynchronously
+
+        return true;
     }
 
     // New: Get scraped data
@@ -68,6 +131,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }).catch((error) => {
             sendResponse({ success: false, message: error.message });
         });
+        return true;
+    }
+
+    // Check if current tab is in a scraping window
+    if (request.action === 'isScrapingWindow') {
+        if (!sender.tab) {
+            sendResponse({ isScraping: false });
+            return true;
+        }
+
+        chrome.windows.get(sender.tab.windowId, (window) => {
+            if (chrome.runtime.lastError) {
+                sendResponse({ isScraping: false });
+                return;
+            }
+
+            chrome.storage.local.get([`scrapingWindow_${window.id}`], (result) => {
+                const isScraping = result[`scrapingWindow_${window.id}`] === true;
+                sendResponse({ isScraping: isScraping });
+            });
+        });
+
         return true;
     }
 });

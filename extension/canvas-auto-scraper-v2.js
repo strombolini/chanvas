@@ -5,10 +5,11 @@ class CanvasAutoScraper {
     constructor() {
         this.scrapingInProgress = false;
         this.coursesData = {};
+        this.targetWindowId = null; // Window to create tabs in
     }
 
     // Main entry point - matches run_canvas_scrape_job
-    async startAutoScrape(progressCallback) {
+    async startAutoScrape(progressCallback, windowId = null) {
         if (this.scrapingInProgress) {
             console.log('Scraping already in progress');
             return;
@@ -18,6 +19,7 @@ class CanvasAutoScraper {
         this.scrapingInProgress = true;
         this.coursesData = {};
         this.progressCallback = progressCallback;
+        this.targetWindowId = windowId; // Store the window ID to use for tabs
 
         try {
             // Step 1: Get course IDs from dashboard (like get_fall_2025_course_ids)
@@ -211,7 +213,13 @@ class CanvasAutoScraper {
         return new Promise((resolve, reject) => {
             console.log(`[SCRAPER]     Opening: ${url}`);
 
-            chrome.tabs.create({ url: url, active: false }, (tab) => {
+            // Create tab options - specify window if provided
+            const createOptions = { url: url, active: false };
+            if (this.targetWindowId) {
+                createOptions.windowId = this.targetWindowId;
+            }
+
+            chrome.tabs.create(createOptions, (tab) => {
                 if (chrome.runtime.lastError) {
                     reject(new Error(chrome.runtime.lastError.message));
                     return;
