@@ -1,4 +1,4 @@
-.PHONY: venv chunks clear-db
+.PHONY: venv chunks clear-db courses docs clear-jobs fix-user combine-docs
 
 venv:
 	python3 -m venv venv
@@ -6,6 +6,24 @@ venv:
 
 chunks:
 	@python3 -c "import sqlite3; conn = sqlite3.connect('local.db'); cursor = conn.cursor(); cursor.execute('SELECT c.id, c.document_id, LENGTH(c.text) as text_length, SUBSTR(c.text, 1, 100) as text_preview, d.user_id, d.created_at FROM chunks c JOIN documents d ON c.document_id = d.id ORDER BY d.created_at DESC'); chunks = cursor.fetchall(); print(f'Total chunks: {len(chunks)}'); [print(f'Chunk {i+1}:\\n  ID: {chunk_id[:12]}...\\n  Document: {doc_id[:12]}...\\n  User: {user_id}\\n  Created: {created_at}\\n  Text length: {text_len} characters\\n  Preview: {preview}...\\n') for i, (chunk_id, doc_id, text_len, preview, user_id, created_at) in enumerate(chunks)]; cursor.execute('SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL'); print(f'Chunks with embeddings: {cursor.fetchone()[0]}'); conn.close()"
+
+courses:
+	@python3 -c "import sqlite3; conn = sqlite3.connect('local.db'); cursor = conn.cursor(); cursor.execute('SELECT id, user_id, course_id, course_name, LENGTH(content) as content_length, created_at, updated_at FROM course_docs ORDER BY created_at DESC'); courses = cursor.fetchall(); print(f'\\nTotal courses: {len(courses)}\\n'); print('=' * 80); [print(f'\\nCourse {i+1}:\\n  ID: {id[:12]}...\\n  User ID: {user_id}\\n  Course ID: {course_id}\\n  Course Name: {course_name}\\n  Content Length: {content_len:,} characters\\n  Created: {created_at}\\n  Updated: {updated_at}') for i, (id, user_id, course_id, course_name, content_len, created_at, updated_at) in enumerate(courses)]; print('\\n' + '=' * 80); cursor.execute('SELECT user_id, COUNT(*) as course_count FROM course_docs GROUP BY user_id'); user_stats = cursor.fetchall(); print('\\nCourses per user:'); [print(f'  User {user_id}: {count} courses') for user_id, count in user_stats]; conn.close()"
+
+docs:
+	@python3 -c "import sqlite3; conn = sqlite3.connect('local.db'); cursor = conn.cursor(); cursor.execute('SELECT id, user_id, job_id, LENGTH(content) as content_length, created_at FROM documents ORDER BY created_at DESC'); docs = cursor.fetchall(); print(f'\\nTotal documents: {len(docs)}\\n'); print('=' * 80); [print(f'\\nDocument {i+1}:\\n  ID: {id[:12]}...\\n  User ID: {user_id}\\n  Job ID: {job_id[:12] + \"...\" if job_id else \"None (extension scrape)\"}\\n  Content Length: {content_len:,} characters\\n  Created: {created_at}') for i, (id, user_id, job_id, content_len, created_at) in enumerate(docs)]; print('\\n' + '=' * 80); cursor.execute('SELECT user_id, COUNT(*) as doc_count, SUM(LENGTH(content)) as total_size FROM documents GROUP BY user_id'); user_stats = cursor.fetchall(); print('\\nDocuments per user:'); [print(f'  User {user_id}: {count} documents ({total_size:,} total characters)') for user_id, count, total_size in user_stats]; conn.close()"
+
+clear-jobs:
+	@echo "Clearing all jobs..."
+	@python3 -c "import sqlite3; conn = sqlite3.connect('local.db'); cursor = conn.cursor(); cursor.execute('SELECT COUNT(*) FROM jobs'); count_before = cursor.fetchone()[0]; print(f'Jobs before: {count_before}'); cursor.execute('DELETE FROM jobs'); conn.commit(); cursor.execute('SELECT COUNT(*) FROM jobs'); count_after = cursor.fetchone()[0]; print(f'Jobs after: {count_after}'); print(f'\\nDeleted {count_before} jobs'); conn.close()"
+
+fix-user:
+	@echo "Fixing user IDs (moving temp user data to user 1)..."
+	@python3 -c "import sqlite3; conn = sqlite3.connect('local.db'); cursor = conn.cursor(); cursor.execute('SELECT DISTINCT user_id FROM documents WHERE user_id > 100000'); temp = cursor.fetchall(); temp_id = temp[0][0] if temp else None; cursor.execute('UPDATE documents SET user_id = 1 WHERE user_id > 100000') if temp_id else None; docs = cursor.rowcount; cursor.execute('UPDATE course_docs SET user_id = 1 WHERE user_id > 100000'); courses = cursor.rowcount; conn.commit(); print(f'Updated {docs} documents and {courses} course_docs to user_id 1'); conn.close()"
+
+combine-docs:
+	@echo "Combining course docs into single document with chunks..."
+	@python3 -c "from app import SessionLocal, chunk_for_embeddings, openai_embed, EMBED_MODEL, RETRIEVAL_CHUNK_TOKENS, Chunk, Document, sanitize_db_text, sql_text; import sqlite3, uuid, datetime, json; conn = sqlite3.connect('local.db'); cursor = conn.cursor(); cursor.execute('SELECT course_id, course_name, content FROM course_docs WHERE user_id = 1 ORDER BY course_id'); courses = cursor.fetchall(); combined = ''.join([f'\\n\\n=== COURSE: {name} (ID: {cid}) ===\\n\\n{content}' for cid, name, content in courses]); cursor.execute('DELETE FROM documents WHERE user_id = 1'); doc_id = uuid.uuid4().hex; cursor.execute('INSERT INTO documents (id, user_id, job_id, content, created_at) VALUES (?, ?, ?, ?, ?)', (doc_id, 1, None, combined, datetime.datetime.utcnow())); conn.commit(); conn.close(); print(f'Created combined document: {doc_id} ({len(combined):,} chars from {len(courses)} courses)'); db = SessionLocal(); doc = db.query(Document).filter(Document.user_id == 1).first(); chunks_text = chunk_for_embeddings(doc.content, EMBED_MODEL, RETRIEVAL_CHUNK_TOKENS); embeddings = openai_embed(chunks_text); [db.add(Chunk(id=uuid.uuid4().hex, document_id=doc.id, chunk_index=i, text=sanitize_db_text(t), embedding=json.dumps(e))) for i, (t, e) in enumerate(zip(chunks_text, embeddings))]; db.commit(); db.close(); print(f'Created {len(chunks_text)} chunks with embeddings')"
 
 clear-db:
 	@echo "Clearing database..."

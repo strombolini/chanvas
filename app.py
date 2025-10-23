@@ -23,8 +23,8 @@ from sqlalchemy import create_engine, text as sql_text
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import PendingRollbackError
 from logging.handlers import RotatingFileHandler
-from models import Base, User, Job, Document, Chunk
-from canvas_scraper import run_canvas_scrape_job
+from models import Base, User, Job, Document, Chunk, CourseDoc
+from canvas_scraper import run_canvas_scrape_job, run_canvas_scrape_job_with_cookies
 from config import TEST_SCRAPE_TEXT, TEST_SCRAPE_TEXT_2
 # Optional tokenizer (true token budgeting like local scripts)
 try:
@@ -38,6 +38,32 @@ import requests
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
+
+# OAuth setup
+from authlib.integrations.flask_client import OAuth
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+    client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={
+        'scope': 'openid email profile'
+    }
+)
+
+# Add CORS headers to allow browser extension requests
+@app.after_request
+def after_request(response):
+    origin = request.headers.get('Origin')
+    if origin and 'canvas.cornell.edu' in origin:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+    else:
+        response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 # Database (normalize Heroku scheme and force sslmode=require on hosted Postgres)
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///local.db")
@@ -1355,6 +1381,32 @@ def _enqueue_job_for_user(db, user_id: int, username: str, password: str, headle
     t = threading.Thread(target=worker, name=f"auto-{job_id}", daemon=True)
     t.start()
 
+def _enqueue_session_job(db, user_id: int, cookies_json: str, job_id: str):
+    """
+    Create and start a new scraping job using session cookies from browser extension.
+
+    Args:
+        db: Database session
+        user_id (int): The user's unique identifier
+        cookies_json (str): JSON string of Canvas session cookies
+        job_id (str): The job ID to use
+    """
+    print(f"🚀 Starting session job thread: user_id={user_id}, job_id={job_id}")
+    def worker():
+        print(f"🔄 Session job worker started: {job_id}")
+        _wait_for_job_slot(job_id)
+        try:
+            print(f"📋 Running session scrape and index: {job_id}")
+            run_session_scrape_and_index(user_id, cookies_json, job_id)
+            print(f"✅ Session scrape completed: {job_id}")
+        except Exception as e:
+            print(f"💥 Session job error: {job_id} - {str(e)}")
+        finally:
+            _release_job_slot()
+    t = threading.Thread(target=worker, name=f"session-{job_id}", daemon=True)
+    t.start()
+    print(f"🎯 Session job thread started: {job_id}")
+
 def _resume_interrupted_jobs():
     db = SessionLocal()
     try:
@@ -1435,6 +1487,94 @@ def _compute_current_term_label(now: Optional[datetime.datetime] = None) -> str:
     if 1 <= m <= 5:
         return f"Spring {y}"
     return f"Summer {y}"
+
+def run_session_scrape_and_index(user_id: int, cookies_json: str, job_id: str):
+    """
+    Run scraping and indexing using session cookies from browser extension.
+
+    Args:
+        user_id (int): The user's unique identifier
+        cookies_json (str): JSON string of Canvas session cookies
+        job_id (str): The job ID for tracking
+    """
+    db = SessionLocal()
+    tmp_root = ""  # ensure defined for finally
+    try:
+        # Set Canvas environment variables
+        term_label_default = _compute_current_term_label()
+        os.environ["CANVAS_FETCH_ALL_COURSES"] = "1"
+        os.environ["CANVAS_FAVORITES_ONLY"] = "0"
+        os.environ["CANVAS_INCLUDE_PAST_COURSES"] = "0"
+        os.environ["CANVAS_INCLUDE_FUTURE_COURSES"] = "0"
+        os.environ["CANVAS_INCLUDE_UNPUBLISHED"] = "1"
+        os.environ["CANVAS_PER_PAGE"] = os.environ.get("CANVAS_PER_PAGE", "100")
+        os.environ["CANVAS_ENROLLMENT_STATES"] = "active,invited,completed"
+        os.environ["CANVAS_CURRENT_TERM_ONLY"] = "1"
+        os.environ["CANVAS_TERM_LABEL"] = os.environ.get("CANVAS_TERM_LABEL", term_label_default)
+
+        with contextlib.suppress(KeyError):
+            del os.environ["CANVAS_COURSE_STATES"]
+
+        _update_job(
+            db, job_id, status="starting",
+            log_line="Starting session-based Canvas scrape using browser extension cookies"
+        )
+
+        cb = _status_callback_factory(job_id)
+
+        # Parse cookies for session-based scraping
+        try:
+            cookies = json.loads(cookies_json)
+            _update_job(db, job_id, status="session_scraping",
+                       log_line=f"Using {len(cookies)} session cookies from browser extension")
+        except json.JSONDecodeError:
+            _update_job(db, job_id, status="failed",
+                       log_line="Failed to parse session cookies")
+            return
+
+        # Call modified canvas scraper with cookies instead of credentials
+        _update_job(db, job_id, status="scraping", log_line="Starting Canvas scrape with session cookies")
+
+        # For now, we'll use a simplified approach - in production you'd modify canvas_scraper.py
+        # to accept cookies instead of username/password
+        try:
+            res = run_canvas_scrape_job_with_cookies(cookies=cookies, headless=True, status_callback=cb)
+        except Exception as e:
+            # Fallback: log error and mark job as failed
+            _update_job(db, job_id, status="failed",
+                       log_line=f"Session-based scraping failed: {str(e)}")
+            return
+
+        input_path = (res or {}).get("input_path") or ""
+        if not input_path or not os.path.exists(input_path):
+            _update_job(db, job_id, status="failed", log_line="No scraping output found")
+            return
+
+        # Continue with compression and indexing (same as regular flow)
+        _update_job(db, job_id, status="compressing", log_line="Starting compression")
+
+        with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+            raw_content = f.read()
+
+        if not raw_content.strip():
+            _update_job(db, job_id, status="failed", log_line="No content to process")
+            return
+
+        # Compress and index the content
+        compressed = compress_raw_text(raw_content, f"Session job {job_id}: ")
+        doc_id = persist_compressed_and_index(db, user_id, job_id, compressed)
+
+        _update_job(db, job_id, status="completed",
+                   log_line=f"Session-based scrape completed successfully. Document ID: {doc_id}")
+
+    except Exception as e:
+        log_exception(f"run_session_scrape_and_index({user_id}, {job_id})", e)
+        _update_job(db, job_id, status="failed", log_line=f"Session scrape failed: {str(e)}")
+    finally:
+        if tmp_root and os.path.exists(tmp_root):
+            with contextlib.suppress(Exception):
+                shutil.rmtree(tmp_root)
+        db.close()
 
 def run_scrape_and_index(user_id: int, username: str, password: str, headless: bool, job_id: str, reuse_session_only: bool = False):
     db = SessionLocal()
@@ -2133,6 +2273,13 @@ def signup():
         body = f"""
 <div class="card">
   <h2>Sign up</h2>
+
+  <a href="/signup/google" class="btn" style="display:block;text-align:center;background:#4285f4;color:white;text-decoration:none;margin-bottom:20px;">
+    🎓 Sign up with Cornell Gmail
+  </a>
+
+  <div style="text-align:center;color:var(--muted);margin:20px 0;">or</div>
+
   <form method="post">
     <label>Username</label>
     <input name="username" placeholder="netid" />
@@ -2163,6 +2310,13 @@ def login():
         body = f"""
 <div class="card">
   <h2>Log in</h2>
+
+  <a href="/login/google" class="btn" style="display:block;text-align:center;background:#4285f4;color:white;text-decoration:none;margin-bottom:20px;">
+    🎓 Sign in with Cornell Gmail
+  </a>
+
+  <div style="text-align:center;color:var(--muted);margin:20px 0;">or</div>
+
   <form method="post">
     <label>Username</label>
     <input name="username" placeholder="netid" />
@@ -2177,6 +2331,102 @@ def login():
         return ocean_layout("Log in â€¢ Ocean Canvas Assistant", body)
     finally:
         db.close()
+
+@app.route("/signup/google")
+def signup_google():
+    redirect_uri = url_for("signup_callback", _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route("/signup/callback")
+def signup_callback():
+    db = SessionLocal()
+    try:
+        token = google.authorize_access_token()
+        user_info = token.get('userinfo')
+
+        if not user_info:
+            body = "<div class='card'>Failed to get user info from Google. <a href='/signup'>Try again</a></div>"
+            return ocean_layout("Signup Error", body), 400
+
+        email = user_info.get('email', '').lower()
+
+        # Restrict to Cornell emails only
+        if not email.endswith('@cornell.edu'):
+            body = "<div class='card'>Only Cornell email addresses (@cornell.edu) are allowed. <a href='/signup'>Back</a></div>"
+            return ocean_layout("Access Denied", body), 403
+
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            body = "<div class='card'>An account with this email already exists. <a href='/login'>Log in instead</a></div>"
+            return ocean_layout("Account Exists", body), 400
+
+        # Create new user from OAuth
+        netid = email.split('@')[0]
+        user = User(
+            username=netid,
+            netid=netid,
+            email=email,
+            oauth_provider='google',
+            password_hash=None,
+            created_at=datetime.datetime.utcnow()
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        # Log in the user
+        session["user_id"] = user.id
+        return redirect(url_for("dashboard"))
+
+    except Exception as e:
+        logger.error(f"OAuth signup error: {str(e)}")
+        body = f"<div class='card'>Signup failed: {str(e)}. <a href='/signup'>Try again</a></div>"
+        return ocean_layout("Signup Error", body), 500
+    finally:
+        db.close()
+
+@app.route("/login/google")
+def login_google():
+    redirect_uri = url_for("login_callback", _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route("/login/callback")
+def login_callback():
+    db = SessionLocal()
+    try:
+        token = google.authorize_access_token()
+        user_info = token.get('userinfo')
+
+        if not user_info:
+            body = "<div class='card'>Failed to get user info from Google. <a href='/login'>Try again</a></div>"
+            return ocean_layout("Login Error", body), 400
+
+        email = user_info.get('email', '').lower()
+
+        # Restrict to Cornell emails only
+        if not email.endswith('@cornell.edu'):
+            body = "<div class='card'>Only Cornell email addresses (@cornell.edu) are allowed. <a href='/login'>Back</a></div>"
+            return ocean_layout("Access Denied", body), 403
+
+        # Find existing user (do NOT auto-create)
+        user = db.query(User).filter(User.email == email).first()
+
+        if not user:
+            body = "<div class='card'>No account found with this email. <a href='/signup'>Sign up first</a></div>"
+            return ocean_layout("Account Not Found", body), 404
+
+        # Log in the user
+        session["user_id"] = user.id
+        return redirect(url_for("dashboard"))
+
+    except Exception as e:
+        logger.error(f"OAuth callback error: {str(e)}")
+        body = f"<div class='card'>Login failed: {str(e)}. <a href='/login'>Try again</a></div>"
+        return ocean_layout("Login Error", body), 500
+    finally:
+        db.close()
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -2200,7 +2450,13 @@ def dashboard():
     db = SessionLocal()
     try:
         u = current_user(db)
-        jobs = db.query(Job).filter(Job.user_id == u.id).order_by(Job.created_at.desc()).limit(12).all()
+        # Get regular user jobs
+        user_jobs = db.query(Job).filter(Job.user_id == u.id).order_by(Job.created_at.desc()).limit(8).all()
+        # Get recent session-based jobs (temp user IDs > 100000)
+        session_jobs = db.query(Job).filter(Job.user_id > 100000).order_by(Job.created_at.desc()).limit(4).all()
+        # Combine and sort by creation time
+        all_jobs = sorted(user_jobs + session_jobs, key=lambda x: x.created_at or datetime.datetime.min, reverse=True)[:12]
+        jobs = all_jobs
         last_job = latest_job_for_user(db, u.id)
         stream_ready = False
         if last_job:
@@ -2209,9 +2465,17 @@ def dashboard():
         for j in jobs:
             duo = (j.duo_code or "").strip()
             duo_html = f"<div class='duo'>DUO CODE: {duo}</div>" if duo else ""
+
+            # Determine if this is a session-based job
+            is_session_job = j.user_id > 100000
+            job_type_badge = "<span class='badge' style='background:#4CAF50;color:white;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;'>Extension</span>" if is_session_job else ""
+
+            # Format job ID for display
+            display_id = j.id[:8] + "..." if len(j.id) > 12 else j.id
+
             rows.append(f"""
 <tr>
-  <td><span class="mono">{j.id}</span></td>
+  <td><span class="mono">{display_id}</span>{job_type_badge}</td>
   <td>{j.status or ''}{' ' + duo_html if duo_html else ''}</td>
   <td><span class="mono">{(j.updated_at or j.created_at).strftime('%Y-%m-%d %H:%M:%S')}</span></td>
   <td><a class="btn" href="/job/{j.id}">Open</a></td>
@@ -2220,6 +2484,7 @@ def dashboard():
         jobs_html = f"""
 <div class="card">
   <h2>Jobs</h2>
+  <p><small>Manual scrapes + Browser extension scrapes <span style='background:#4CAF50;color:white;font-size:10px;padding:2px 6px;border-radius:10px;'>Extension</span></small></p>
   <table>
     <thead><tr><th>ID</th><th>Status</th><th>Updated</th><th></th></tr></thead>
     <tbody>
@@ -2416,16 +2681,24 @@ def job_detail(job_id):
     db = SessionLocal()
     try:
         u = current_user(db)
+        # First try to find job for current user
         job = db.query(Job).filter(Job.id == job_id, Job.user_id == u.id).first()
+        # If not found, check if it's a session-based job (allow access to session jobs)
+        if not job:
+            job = db.query(Job).filter(Job.id == job_id, Job.user_id > 100000).first()
         if not job:
             return ocean_layout("Job", "<div class='card'>Job not found.</div>"), 404
-        duo_html = f"<div class='duo'>DUO CODE: {job.duo_code}</div>" if (job.duo_code or "").strip() else "<div class='badge'>No Duo code captured yet.</div>"
+        # Check if it's a session job and add appropriate badges
+        is_session_job = job.user_id > 100000
+        session_badge = "<span style='background:#4CAF50;color:white;font-size:12px;padding:4px 8px;border-radius:12px;margin-left:10px;'>Extension Job</span>" if is_session_job else ""
+
+        duo_html = f"<div class='duo'>DUO CODE: {job.duo_code}</div>" if (job.duo_code or "").strip() else ("<div class='badge'>No Duo code (extension job)</div>" if is_session_job else "<div class='badge'>No Duo code captured yet.</div>")
         # In job_detail(job_id), replace the body HTML with IDs and add the poller:
         body = f"""
         <div class="card">
-          <h2>Job <span class="mono">{job.id}</span></h2>
+          <h2>Job <span class="mono">{job.id[:8]}...</span>{session_badge}</h2>
           <p>Status: <span id="job-status" class="badge">{job.status or ''}</span></p>
-          {duo_html}
+          {duo_html if not is_session_job else '<div class="badge">Used session cookies from browser extension</div>'}
           <p><a class="btn" href="/">Back to dashboard</a></p>
         </div>
         <div class="card">
@@ -2468,25 +2741,45 @@ def chat():
     try:
         u = current_user(db)
 
-        def _load_context_text() -> str:
+        def _load_context_text(canvas_data_json: str = None) -> str:
             """
-            Load the entire compressed document content for the current user.
+            Load context from extension's localStorage (preferred) or fallback to database.
 
-            This function loads the full compressed/summarized document that serves
-            as context for all chat queries. It does NOT perform selective retrieval.
+            Args:
+                canvas_data_json: JSON string from extension's chrome.storage.local
 
             Returns:
-                str: Full compressed document text, or empty string if none found
+                str: Combined course content text
 
             Process:
-                1. Gets the user's most recent job (scraping/processing job)
-                2. Tries to load from stream file (compressed output from job)
-                3. Fallback: loads from Document table if stream file missing
-                4. Returns entire content as a single string
-
-            Note: This is called for every chat message, loading the complete
-            document context rather than relevant chunks.
+                1. If canvas_data provided from extension, parse and combine all courses
+                2. Fallback: Load from database (old method)
             """
+            # Try loading from extension data first
+            if canvas_data_json:
+                try:
+                    canvas_data = json.loads(canvas_data_json)
+                    courses = canvas_data.get('courses', {})
+
+                    if courses:
+                        combined_text = ""
+                        for course_id, course_info in courses.items():
+                            combined_text += f"\n\n{'='*80}\n"
+                            combined_text += f"COURSE: {course_info.get('name', 'Unknown')} (ID: {course_id})\n"
+                            combined_text += f"{'='*80}\n\n"
+
+                            pages = course_info.get('pages', {})
+                            for page_name, page_data in pages.items():
+                                combined_text += f"\n--- {page_name.upper()} ---\n"
+                                combined_text += page_data.get('content', '')
+                                combined_text += "\n\n"
+
+                        logger.info(f"[CHAT] Loaded {len(courses)} courses from extension localStorage")
+                        return combined_text.strip()
+                except Exception as e:
+                    logger.error(f"[CHAT] Failed to parse extension data: {e}")
+
+            # Fallback to database method
             last_job = latest_job_for_user(db, u.id)
             if last_job:
                 stream_path = _stream_file_path(u.id, last_job.id)
@@ -2494,12 +2787,15 @@ def chat():
                     with open(stream_path, "r", encoding="utf-8", errors="ignore") as f:
                         s = f.read().strip()
                         if s:
+                            logger.info("[CHAT] Loaded context from stream file (database fallback)")
                             return s
             # fallback to DB-backed Document
             doc_id = latest_document_id(db, u.id)
             if doc_id:
                 row = db.query(Document).filter(Document.id == doc_id).first()
+                logger.info("[CHAT] Loaded context from Document table (database fallback)")
                 return (row.content or "").strip()
+
             return ""
 
         # 1) Load saved classes.json (if present)
@@ -2537,12 +2833,15 @@ def chat():
         gen_mode = None
 
         if request.method == "POST":
+            # Get canvas data from extension (if provided)
+            canvas_data_json = request.form.get("canvas_data") or None
+
             # Generation buttons submit
             selected_course = (request.form.get("gen_course") or "").strip()
             gen_mode = (request.form.get("gen_mode") or "").strip()
 
             if selected_course:
-                corpus = _load_context_text()
+                corpus = _load_context_text(canvas_data_json)
                 if corpus:
                     if gen_mode == "practice":
                         practice = generate_practice_test(selected_course, corpus)
@@ -2570,39 +2869,134 @@ def chat():
                     hist = []
                 prev_user_msgs = hist[:]
 
-                # Use semantic search to get relevant chunks instead of entire document
-                doc_id = latest_document_id(db, u.id)
-                total_chunks = count_chunks_for_user(db, u.id)
+                # Check if pre-computed RAG index is provided from extension
+                rag_index_json = request.form.get("rag_index") or None
 
-                if not doc_id:
-                    answer = "No documents found yet. Start a scrape or test scrape."
-                elif total_chunks == 0:
-                    answer = f"No chunks found in database. Document ID: {doc_id}. You may need to reprocess your documents to create chunks."
-                else:
-                    # Calculate token budget for context (reserve space for question and response)
-                    context_budget = MODEL_CONTEXT_TOKENS - 2000  # Reserve 2000 tokens for question/response
-                    context_text = retrieve_context(db, doc_id, question, TOP_K, context_budget)
-                    if not context_text:
-                        answer = "No relevant context found for your question."
-                        chunks = None
-                    else:
-                        # Log chunk previews being used as context
-                        chunk_list = context_text.split('\n\n') if context_text else []
-                        logger.info(f"[CHAT DEBUG] Question: {question[:100]}...")
-                        logger.info(f"[CHAT DEBUG] Using {len(chunk_list)} most relevant chunks ({len(context_text)} chars total)")
-                        for i, chunk in enumerate(chunk_list):
-                            preview = chunk[:200].replace('\n', ' ')
-                            logger.info(f"[CHAT DEBUG] Chunk {i+1}: {preview}...")
+                if rag_index_json:
+                    # Use pre-computed embeddings from extension
+                    try:
+                        logger.info(f"[CHAT] Using pre-computed RAG index from extension")
+                        rag_index = json.loads(rag_index_json)
 
+                        indexed_chunks = rag_index.get('chunks', [])
+                        indexed_embeddings = rag_index.get('embeddings', [])
+
+                        if not indexed_chunks or not indexed_embeddings:
+                            raise Exception("RAG index is empty")
+
+                        logger.info(f"[CHAT] Question: {question[:100]}...")
+                        logger.info(f"[CHAT] Using {len(indexed_chunks)} pre-indexed chunks")
+
+                        # 1. Embed the question only
+                        question_embedding = openai_embed([question])
+                        if not question_embedding:
+                            raise Exception("Failed to embed question")
+                        qvec = question_embedding[0]
+
+                        # 2. Calculate similarity with pre-computed embeddings
+                        scored_chunks = []
+                        for i, (chunk_text, chunk_emb) in enumerate(zip(indexed_chunks, indexed_embeddings)):
+                            similarity = cosine_sim(qvec, chunk_emb)
+                            scored_chunks.append((similarity, chunk_text))
+
+                        # 3. Sort by similarity and get top-k
+                        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                        top_chunks = [text for _, text in scored_chunks[:TOP_K]]
+                        top_scores = [score for score, _ in scored_chunks[:TOP_K]]
+
+                        # 4. Combine top chunks as context
+                        context_text = "\n\n".join(top_chunks)
+
+                        # 5. Truncate to fit within token budget
+                        context_budget = MODEL_CONTEXT_TOKENS - 3000
+                        context_text = truncate_to_tokens(context_text, context_budget, CHAT_MODEL)
+
+                        logger.info(f"[CHAT] Using top {len(top_chunks)} chunks ({len(context_text)} chars)")
+                        logger.info(f"[CHAT] Top similarities: {[f'{s:.3f}' for s in top_scores[:3]]}")
+
+                        # 6. Generate answer with retrieved context
                         answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
 
-                        # Store chunks for debug display
+                        # Store info for debug display
                         chunks = {
-                            'count': len(chunk_list),
+                            'count': len(top_chunks),
                             'total_chars': len(context_text),
-                            'preview': context_text[:800] + '...' if len(context_text) > 800 else context_text,
-                            'chunks': chunk_list[:3]  # Show first 3 chunks
+                            'scores': top_scores[:5],
+                            'chunks': [chunk[:200] + '...' for chunk in top_chunks[:5]]
                         }
+
+                    except Exception as e:
+                        logger.error(f"[CHAT] RAG with pre-computed index error: {e}")
+                        log_exception("chat_rag_precomputed", e)
+                        answer = f"Error using pre-computed index: {str(e)}. Try re-indexing your data."
+                        chunks = None
+
+                else:
+                    # Fallback: Load context and compute embeddings on-the-fly (slower)
+                    full_context = _load_context_text(canvas_data_json)
+
+                    if not full_context:
+                        answer = "No course data found. Please scrape your Canvas courses using the extension or start a scrape job."
+                        chunks = None
+                    else:
+                        try:
+                            # RAG: Use semantic search (compute embeddings on demand)
+                            logger.info(f"[CHAT] Question: {question[:100]}...")
+                            logger.info(f"[CHAT] Full context: {len(full_context)} chars (computing embeddings on-the-fly)")
+
+                            # 1. Split full context into chunks for embedding
+                            text_chunks = chunk_for_embeddings(full_context, EMBED_MODEL, RETRIEVAL_CHUNK_TOKENS)
+                            logger.info(f"[CHAT] Split into {len(text_chunks)} chunks")
+
+                            if not text_chunks:
+                                answer = "No content to search. Please try scraping again."
+                                chunks = None
+                            else:
+                                # 2. Embed the question
+                                question_embedding = openai_embed([question])
+                                if not question_embedding:
+                                    raise Exception("Failed to embed question")
+                                qvec = question_embedding[0]
+
+                                # 3. Embed all chunks (expensive!)
+                                logger.info(f"[CHAT] Generating embeddings for {len(text_chunks)} chunks...")
+                                chunk_embeddings = openai_embed(text_chunks)
+
+                                # 4. Calculate similarity scores
+                                scored_chunks = []
+                                for chunk_text, chunk_emb in zip(text_chunks, chunk_embeddings):
+                                    similarity = cosine_sim(qvec, chunk_emb)
+                                    scored_chunks.append((similarity, chunk_text))
+
+                                # 5. Sort by similarity and get top-k
+                                scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                                top_chunks = [text for _, text in scored_chunks[:TOP_K]]
+
+                                # 6. Combine top chunks as context
+                                context_text = "\n\n".join(top_chunks)
+
+                                # 7. Truncate to fit within token budget
+                                context_budget = MODEL_CONTEXT_TOKENS - 3000
+                                context_text = truncate_to_tokens(context_text, context_budget, CHAT_MODEL)
+
+                                logger.info(f"[CHAT] Using top {len(top_chunks)} chunks: {len(context_text)} chars")
+
+                                # 8. Generate answer with retrieved context
+                                answer = answer_with_context(question, context_text, prev_user_messages=prev_user_msgs)
+
+                                # Store info for debug display
+                                chunks = {
+                                    'count': len(top_chunks),
+                                    'total_chars': len(context_text),
+                                    'chunks': [chunk[:200] + '...' for chunk in top_chunks[:3]]
+                                }
+
+                        except Exception as e:
+                            logger.error(f"[CHAT] RAG error: {e}")
+                            log_exception("chat_rag", e)
+                            answer = f"Error processing question: {str(e)}. Try asking a simpler question or check if your courses are scraped."
+                            chunks = None
+
                 hist.append(question)
                 if len(hist) > 20:
                     hist = hist[-20:]
@@ -2624,6 +3018,272 @@ def chat():
     finally:
         db.close()
 
+
+# -----------------------------------------------------------------------------
+# Browser Extension API Endpoints
+# -----------------------------------------------------------------------------
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """Health check endpoint for browser extension"""
+    return jsonify({"status": "ok", "service": "chanvas", "timestamp": datetime.datetime.utcnow().isoformat()}), 200
+
+@app.route("/api/session-login", methods=["POST", "OPTIONS"])
+def api_session_login():
+    # Handle CORS preflight request
+    if request.method == "OPTIONS":
+        return "", 200
+    """Handle session-based login from browser extension"""
+    try:
+        print("🔍 Session login endpoint called")
+        data = request.get_json()
+        if not data:
+            print("❌ No JSON data provided")
+            return jsonify({"error": "No JSON data provided"}), 400
+        print(f"📦 Received data: {len(data.get('canvas_cookies', []))} cookies")
+
+        canvas_cookies = data.get('canvas_cookies', [])
+        canvas_url = data.get('canvas_url', '')
+        timestamp = data.get('timestamp', 0)
+
+        if not canvas_cookies:
+            return jsonify({"error": "No Canvas cookies provided"}), 400
+
+        # For now, we'll need to identify the user somehow
+        # This is a simplified approach - in production you'd want better user identification
+        session_token = None
+        user_identifier = None
+
+        # Look for Canvas session/user identifier in cookies
+        for cookie in canvas_cookies:
+            if cookie['name'] == 'canvas_session' or 'session' in cookie['name']:
+                session_token = cookie['value']
+            elif cookie['name'] == 'canvas_user_id' or 'user' in cookie['name']:
+                user_identifier = cookie['value']
+
+        if not session_token:
+            return jsonify({"error": "No valid Canvas session found in cookies"}), 400
+
+        # Store cookies for future scraping (this is where cookies_json becomes useful)
+        db = SessionLocal()
+        try:
+            # For demo purposes, we'll use the first user or create a temp association
+            # In production, you'd have proper user identification
+            cookies_json = json.dumps(canvas_cookies)
+
+            # Try to find existing user session or create temporary mapping
+            # This is a simplified approach for the demo
+            temp_user_id = hash(session_token) % 1000000  # Simple hash-based ID
+
+            # Check if we have a user with this session
+            auto_scrape = db.query(AutoScrape).filter(AutoScrape.id == str(temp_user_id)).first()
+            if not auto_scrape:
+                # Create a temporary AutoScrape entry for this session
+                auto_scrape = AutoScrape(
+                    id=str(temp_user_id),
+                    user_id=temp_user_id,
+                    enabled=True,
+                    username="extension_user",
+                    password_enc="",  # No password needed for session-based
+                    headless=True,
+                    cookies_json=cookies_json
+                )
+                db.add(auto_scrape)
+            else:
+                # Update existing entry with new cookies
+                auto_scrape.cookies_json = cookies_json
+                auto_scrape.updated_at = datetime.datetime.utcnow()
+                db.add(auto_scrape)
+
+            db.commit()
+
+            # Start a scraping job using the session cookies
+            job_id = uuid.uuid4().hex
+            job = Job(
+                id=job_id,
+                user_id=temp_user_id,
+                status="session_starting",
+                created_at=datetime.datetime.utcnow(),
+                updated_at=datetime.datetime.utcnow()
+            )
+            db.add(job)
+            db.commit()
+
+            # Queue the session-based scraping job
+            _enqueue_session_job(db, temp_user_id, cookies_json, job_id)
+
+            print(f"✅ Session-based job created: user_id={temp_user_id}, job_id={job_id}")
+            return jsonify({
+                "success": True,
+                "message": "Canvas session captured successfully",
+                "job_id": job_id,
+                "user_id": temp_user_id,
+                "cookies_count": len(canvas_cookies)
+            }), 200
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"💥 Session login error: {str(e)}")
+        print(f"💥 Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Session login failed: {str(e)}"}), 500
+
+@app.route("/api/session-jobs", methods=["GET"])
+def api_session_jobs():
+    """Get all session-based jobs for debugging"""
+    db = SessionLocal()
+    try:
+        # Get jobs for temp user IDs (6-digit numbers from hash)
+        jobs = db.query(Job).filter(Job.user_id > 100000).order_by(Job.created_at.desc()).limit(20).all()
+        result = []
+        for job in jobs:
+            result.append({
+                "job_id": job.id,
+                "user_id": job.user_id,
+                "status": job.status,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "updated_at": job.updated_at.isoformat() if job.updated_at else None
+            })
+        return jsonify({"jobs": result}), 200
+    finally:
+        db.close()
+
+@app.route("/api/upload-courses", methods=["POST", "OPTIONS"])
+def api_upload_courses():
+    """
+    Receive course data from browser extension and store in database.
+    For each course:
+    1. Store in CourseDoc table (course metadata + full content)
+    2. Store in Documents table (full scraped content)
+    3. Store in Chunks table (split content with embeddings for retrieval)
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+
+        courses = data.get('courses', [])
+        session_token = data.get('session_token', '')
+        user_email = data.get('user_email', '')  # OAuth email from extension
+
+        if not courses:
+            return jsonify({"error": "No courses provided"}), 400
+
+        db = SessionLocal()
+        try:
+            # If user_email provided, find the OAuth user
+            if user_email and user_email.endswith('@cornell.edu'):
+                user = db.query(User).filter(User.email == user_email).first()
+                if user:
+                    user_id = user.id
+                    logger.info(f"Found OAuth user for email {user_email}: user_id={user_id}")
+                else:
+                    # User must sign up first
+                    return jsonify({
+                        "error": "No account found. Please sign up first at the website.",
+                        "signup_required": True
+                    }), 403
+            else:
+                # Fallback: Generate temp user ID from session token
+                if not session_token:
+                    return jsonify({"error": "No session token or user email provided"}), 400
+                user_id = hash(session_token) % 1000000 + 100000
+                logger.info(f"Using temp user_id={user_id} (no OAuth email)")
+
+            stored_courses = []
+
+            for course in courses:
+                course_id = course.get('courseId')
+                course_name = course.get('courseName', f'Course {course_id}')
+                content = course.get('content', '')
+
+                if not course_id or not content:
+                    continue
+
+                # 1. Store/update in CourseDoc table
+                existing_course_doc = db.query(CourseDoc).filter(
+                    CourseDoc.user_id == user_id,
+                    CourseDoc.course_id == str(course_id)
+                ).first()
+
+                if existing_course_doc:
+                    existing_course_doc.course_name = course_name
+                    existing_course_doc.content = sanitize_db_text(content)
+                    existing_course_doc.updated_at = datetime.datetime.utcnow()
+                    db.add(existing_course_doc)
+                    action = "updated"
+                else:
+                    course_doc = CourseDoc(
+                        id=uuid.uuid4().hex,
+                        user_id=user_id,
+                        course_id=str(course_id),
+                        course_name=course_name,
+                        content=sanitize_db_text(content),
+                        created_at=datetime.datetime.utcnow(),
+                        updated_at=datetime.datetime.utcnow()
+                    )
+                    db.add(course_doc)
+                    action = "created"
+
+                # 2. Store in Documents table (one document per course)
+                doc_id = uuid.uuid4().hex
+                document = Document(
+                    id=doc_id,
+                    user_id=user_id,
+                    job_id=None,  # No job for extension scrapes
+                    content=sanitize_db_text(content)
+                )
+                db.add(document)
+
+                # 3. Create chunks with embeddings for retrieval
+                chunks_created = 0
+                if content.strip():
+                    # Split content into chunks
+                    text_chunks = chunk_for_embeddings(content, EMBED_MODEL, RETRIEVAL_CHUNK_TOKENS)
+
+                    if text_chunks:
+                        # Generate embeddings for all chunks
+                        embeddings = openai_embed(text_chunks)
+
+                        # Store chunks with embeddings
+                        for i, (chunk_text, embedding) in enumerate(zip(text_chunks, embeddings)):
+                            chunk = Chunk(
+                                id=uuid.uuid4().hex,
+                                document_id=doc_id,
+                                chunk_index=i,
+                                text=sanitize_db_text(chunk_text),
+                                embedding=json.dumps(embedding)
+                            )
+                            db.add(chunk)
+                        chunks_created = len(text_chunks)
+
+                stored_courses.append({
+                    "course_id": course_id,
+                    "course_name": course_name,
+                    "action": action,
+                    "chunks_created": chunks_created
+                })
+
+            db.commit()
+
+            return jsonify({
+                "success": True,
+                "message": f"Stored {len(stored_courses)} courses",
+                "courses": stored_courses,
+                "user_id": user_id
+            }), 200
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(f"Upload courses error: {str(e)}")
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
 # -----------------------------------------------------------------------------
 # Live Duo endpoint for newest job (JSON for polling)
@@ -2651,10 +3311,11 @@ def job_state(job_id):
     db = SessionLocal()
     try:
         u = current_user(db)
-        if not u:
-            return jsonify({"status": "", "duo_code": "", "log": ""}), 401
+        # First try to find job for current user
         job = db.query(Job).filter(Job.id == job_id, Job.user_id == u.id).first()
-
+        # If not found, check if it's a session-based job (allow access to session jobs)
+        if not job:
+            job = db.query(Job).filter(Job.id == job_id, Job.user_id > 100000).first()
         if not job:
             return jsonify({"status": "", "duo_code": "", "log": ""}), 404
         try:

@@ -2,13 +2,105 @@
 {% block content %}
 <div class="card">
   <div class="title">Chat with your files</div>
-  <form method="post" class="col">
+  <div id="extension-status" class="mut" style="margin-bottom:10px;"></div>
+  <form id="chat-form" method="post" class="col">
     <div class="col">
       <label>Question</label>
-      <textarea name="question" rows="4" placeholder="Ask about deadlines, grading policy, readings, announcements, etc." required>{{ question or "" }}</textarea>
+      <textarea name="question" id="question-input" rows="4" placeholder="Ask about deadlines, grading policy, readings, announcements, etc." required>{{ question or "" }}</textarea>
     </div>
+    <input type="hidden" name="canvas_data" id="canvas-data-input" />
+    <input type="hidden" name="rag_index" id="rag-index-input" />
     <button class="btn mt" type="submit">Ask</button>
   </form>
+
+  <script>
+  (function() {
+    let canvasDataCache = null;
+    let ragIndexCache = null;
+    const statusDiv = document.getElementById('extension-status');
+    const form = document.getElementById('chat-form');
+    const dataInput = document.getElementById('canvas-data-input');
+    const ragInput = document.getElementById('rag-index-input');
+
+    // Request data from extension on page load
+    function requestExtensionData() {
+      const requestId = Math.random().toString(36);
+
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Extension data request timed out'));
+        }, 3000);
+
+        function handleResponse(event) {
+          if (event.data.type === 'CHANVAS_DATA_RESPONSE' && event.data.requestId === requestId) {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handleResponse);
+            resolve(event.data.data);
+          }
+        }
+
+        window.addEventListener('message', handleResponse);
+        window.postMessage({ type: 'CHANVAS_GET_DATA', requestId: requestId }, '*');
+      });
+    }
+
+    // Request RAG index from extension
+    function requestRAGIndex() {
+      const requestId = Math.random().toString(36);
+
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('RAG index request timed out'));
+        }, 3000);
+
+        function handleResponse(event) {
+          if (event.data.type === 'CHANVAS_RAG_RESPONSE' && event.data.requestId === requestId) {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handleResponse);
+            resolve(event.data.ragIndex);
+          }
+        }
+
+        window.addEventListener('message', handleResponse);
+        window.postMessage({ type: 'CHANVAS_GET_RAG_INDEX', requestId: requestId }, '*');
+      });
+    }
+
+    // Load data on page load
+    Promise.all([requestExtensionData(), requestRAGIndex()]).then(([data, ragIndex]) => {
+      if (data && data.courses) {
+        canvasDataCache = data;
+        const courseCount = Object.keys(data.courses).length;
+
+        if (ragIndex && ragIndex.chunks && ragIndex.embeddings) {
+          ragIndexCache = ragIndex;
+          statusDiv.textContent = `✓ Extension loaded: ${courseCount} courses, ${ragIndex.chunks.length} indexed chunks (RAG enabled)`;
+          statusDiv.style.color = '#28a745';
+        } else {
+          statusDiv.textContent = `✓ Extension loaded: ${courseCount} courses (RAG not indexed - will be slower)`;
+          statusDiv.style.color = '#ffc107';
+        }
+      } else {
+        statusDiv.textContent = '⚠ No course data found. Please scrape your Canvas courses first.';
+        statusDiv.style.color = '#ffc107';
+      }
+    }).catch(err => {
+      console.error('Failed to load extension data:', err);
+      statusDiv.textContent = '✗ Extension not detected. Please install the Chanvas extension.';
+      statusDiv.style.color = '#dc3545';
+    });
+
+    // Intercept form submission to include canvas data and RAG index
+    form.addEventListener('submit', function(e) {
+      if (canvasDataCache) {
+        dataInput.value = JSON.stringify(canvasDataCache);
+      }
+      if (ragIndexCache) {
+        ragInput.value = JSON.stringify(ragIndexCache);
+      }
+    });
+  })();
+  </script>
 
   {# --- INSERT A: Classes UI (buttons + mode) directly under the chat form --- #}
   {% if classes %}
@@ -64,12 +156,18 @@
 
   {% if chunks %}
   <div class="mt">
-    <div class="title" style="font-size:18px">Top snippets used</div>
-    <ul>
-      {% for t in chunks.chunks %}
-        <li class="mut">[{{ loop.index }}] — {{ t[:200] }}{% if t|length > 200 %}…{% endif %}</li>
-      {% endfor %}
-    </ul>
+    <div class="title" style="font-size:18px">Context Used</div>
+    <div class="mut">Using {{ chunks.count }} chunks ({{ chunks.total_chars }} characters)</div>
+    <details class="mt">
+      <summary style="cursor:pointer;color:var(--ocean-accent);">Show chunk preview</summary>
+      <div style="margin-top:10px;">
+        {% for chunk_text in chunks.chunks %}
+          <div class="mut" style="margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.2);border-radius:6px;">
+            [{{ loop.index }}] {{ chunk_text[:200] }}{% if chunk_text|length > 200 %}…{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </details>
   </div>
   {% endif %}
 

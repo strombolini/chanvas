@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Chanvas Auto-Scraper",
+  "version": "2.0.0",
+  "description": "Automatically scrape Canvas courses in your browser and chat with AI",
+  "permissions": [
+    "activeTab",
+    "cookies",
+    "storage",
+    "tabs",
+    "scripting",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://canvas.cornell.edu/*",
+    "http://localhost:*/*",
+    "https://*.herokuapp.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://canvas.cornell.edu/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["http://localhost:*/*", "http://127.0.0.1:*/*", "https://*.herokuapp.com/*"],
+      "js": ["webapp-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Chanvas Scraper & Chat"
+  }
+}
