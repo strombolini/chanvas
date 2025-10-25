@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Chanvas Auto-Scraper",
   "version": "2.0.0",
-  "description": "Automatically scrape Canvas courses in your browser and chat with AI",
+  "description": "Automatically scrape Canvas courses and chat with AI - no backend required!",
   "permissions": [
     "activeTab",
     "cookies",
@@ -14,12 +14,13 @@
   "host_permissions": [
     "https://canvas.cornell.edu/*",
     "http://localhost:*/*",
-    "https://*.herokuapp.com/*"
+    "https://*.herokuapp.com/*",
+    "https://api.openai.com/*"
   ],
   "content_scripts": [
     {
       "matches": ["https://canvas.cornell.edu/*"],
-      "js": ["content.js"],
+      "js": ["content.js", "chat-injector.js"],
       "run_at": "document_end"
     },
     {
@@ -27,6 +28,12 @@
       "js": ["webapp-bridge.js"],
       "run_at": "document_start",
       "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["chat-widget.html", "chat-widget.js", "rag.js"],
+      "matches": ["https://canvas.cornell.edu/*"]
     }
   ],
   "background": {

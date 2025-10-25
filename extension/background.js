@@ -30,6 +30,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'startAutoScrape') {
         console.log('Received startAutoScrape request');
 
+        // Check if scraping is already in progress
+        if (scraper.scrapingInProgress) {
+            console.log('[BACKGROUND] Scraping already in progress, rejecting request');
+            sendResponse({
+                success: false,
+                message: 'Scraping already in progress. Please wait for it to complete.'
+            });
+            return true;
+        }
+
         // Check if we should create a new window or use existing tab
         const createNewWindow = request.createNewWindow !== false; // Default true
 

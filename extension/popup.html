@@ -100,36 +100,37 @@
     </div>
 
     <div class="status info">
-        ✓ Extension Active
-    </div>
-
-    <div class="section">
-        <label for="chanvasUrl">Chanvas Web App URL:</label>
-        <input type="text" id="chanvasUrl" placeholder="http://localhost:8000" />
+        ✓ Extension Active - Fully Standalone!
     </div>
 
     <div class="section">
         <label for="openaiApiKey">OpenAI API Key:</label>
         <input type="password" id="openaiApiKey" placeholder="sk-proj-..." />
         <div style="font-size: 10px; color: #666; margin-top: 4px;">
-            Required for RAG indexing (stored locally)
+            Required for RAG indexing and chat (stored locally)
         </div>
     </div>
 
-    <button id="saveSettings" class="btn">Save Settings</button>
-    <button id="testConnection" class="btn secondary">Test Connection</button>
+    <button id="saveSettings" class="btn">Save API Key</button>
 
     <div id="statusMessage" style="display: none; margin-top: 10px; padding: 8px; border-radius: 4px; font-size: 11px;"></div>
 
     <div class="instructions">
         <strong>How to use:</strong>
         <ol>
-            <li>Set your Chanvas web app URL above</li>
+            <li><strong>Enter your OpenAI API key above and click Save</strong></li>
             <li>Log into Canvas - extension will automatically scrape your courses</li>
-            <li>Visit the Chanvas web app and sign in there to chat with your courses</li>
+            <li>Click the 💬 chat button on Canvas pages to ask questions!</li>
         </ol>
-        <div style="margin-top: 10px; padding: 8px; background: #f8f9fa; border-radius: 4px;">
-            <strong>Note:</strong> Scraped data is stored locally in your browser. Sign in at the web app to access chat features.
+        <div style="margin-top: 10px; padding: 8px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; color: #155724;">
+            <strong>✓ No backend needed!</strong> Everything runs in your browser. Your data stays local and is never uploaded to any server (except OpenAI for chat).
+        </div>
+        <div style="margin-top: 8px; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 10px;">
+            <strong>Features:</strong><br>
+            • Automatic course scraping<br>
+            • Semantic search with RAG<br>
+            • AI chat directly on Canvas<br>
+            • All data stored locally
         </div>
     </div>
 
