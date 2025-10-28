@@ -41,7 +41,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         // Check if we should create a new window or use existing tab
-        const createNewWindow = request.createNewWindow !== false; // Default true
+        const createNewWindow = request.createNewWindow === true; // Default false (scrape in current window)
 
         if (!createNewWindow) {
             // Simple mode: scrape in current context

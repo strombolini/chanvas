@@ -79,13 +79,13 @@
             transition: 'opacity 0.3s ease'
         });
 
-        // Create drag handle overlay for the header
+        // Create drag handle overlay for the header (leave space for close button)
         const dragHandle = document.createElement('div');
         Object.assign(dragHandle.style, {
             position: 'absolute',
             top: '0',
             left: '0',
-            right: '0',
+            right: '40px', // Leave space for close button on the right
             height: '48px',
             cursor: 'grab',
             zIndex: '3',
@@ -220,6 +220,29 @@
         });
         handles.push(topHandle);
 
+        // Bottom-right corner handle for diagonal resizing
+        const cornerHandle = document.createElement('div');
+        Object.assign(cornerHandle.style, {
+            position: 'absolute',
+            bottom: '0',
+            right: '0',
+            width: '16px',
+            height: '16px',
+            cursor: 'nwse-resize',
+            background: 'linear-gradient(135deg, transparent 50%, rgba(45, 90, 160, 0.3) 50%)',
+            borderBottomRightRadius: '12px',
+            zIndex: '4',
+            transition: 'background 0.2s'
+        });
+        cornerHandle.dataset.edge = 'corner';
+        cornerHandle.addEventListener('mouseenter', () => {
+            cornerHandle.style.background = 'linear-gradient(135deg, transparent 50%, rgba(45, 90, 160, 0.5) 50%)';
+        });
+        cornerHandle.addEventListener('mouseleave', () => {
+            cornerHandle.style.background = 'linear-gradient(135deg, transparent 50%, rgba(45, 90, 160, 0.3) 50%)';
+        });
+        handles.push(cornerHandle);
+
         return handles;
     }
 
@@ -268,27 +291,45 @@
             const maxHeight = window.innerHeight * 0.9;
 
             if (currentEdge === 'right') {
-                // Resize width: grow/shrink to the left (keep right edge fixed)
-                const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth - deltaX));
+                // Drag right = grow right, drag left = shrink from right
+                const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + deltaX));
+                const widthDiff = newWidth - startWidth;
                 container.style.width = `${newWidth}px`;
-                // Keep right position fixed
+                // Adjust right position so the right edge moves with cursor
+                container.style.right = `${startRight - widthDiff}px`;
             }
             else if (currentEdge === 'left') {
-                // Resize width: grow/shrink to the left
+                // Drag left = grow left, drag right = shrink from left (mirror of right edge)
+                const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth - deltaX));
+                const widthDiff = newWidth - startWidth;
+                container.style.width = `${newWidth}px`;
+                // Adjust right position so the left edge moves with cursor (opposite of right edge)
+                container.style.right = `${startRight - widthDiff}px`;
+            }
+            else if (currentEdge === 'bottom') {
+                // Drag down = grow down, drag up = shrink from bottom
+                const newHeight = Math.max(minHeight, Math.min(maxHeight, startHeight + deltaY));
+                const heightDiff = newHeight - startHeight;
+                container.style.height = `${newHeight}px`;
+                // Adjust bottom position so bottom edge moves but top edge stays fixed
+                container.style.bottom = `${startBottom - heightDiff}px`;
+            }
+            else if (currentEdge === 'top') {
+                // Drag up = grow up, drag down = shrink from top
+                const newHeight = Math.max(minHeight, Math.min(maxHeight, startHeight - deltaY));
+                container.style.height = `${newHeight}px`;
+                // Keep bottom position fixed (widget grows/shrinks upward naturally)
+            }
+            else if (currentEdge === 'corner') {
+                // Diagonal resize: combine right edge + bottom edge logic
+                // Resize width (right edge)
                 const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + deltaX));
                 const widthDiff = newWidth - startWidth;
                 container.style.width = `${newWidth}px`;
                 container.style.right = `${startRight - widthDiff}px`;
-            }
-            else if (currentEdge === 'bottom') {
-                // Resize height: grow/shrink downward (keep bottom edge fixed)
+
+                // Resize height (bottom edge)
                 const newHeight = Math.max(minHeight, Math.min(maxHeight, startHeight + deltaY));
-                container.style.height = `${newHeight}px`;
-                // Keep bottom position fixed
-            }
-            else if (currentEdge === 'top') {
-                // Resize height: grow/shrink upward
-                const newHeight = Math.max(minHeight, Math.min(maxHeight, startHeight - deltaY));
                 const heightDiff = newHeight - startHeight;
                 container.style.height = `${newHeight}px`;
                 container.style.bottom = `${startBottom - heightDiff}px`;
