@@ -40,28 +40,55 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return true;
         }
 
-        // Check if we should create a new window or use existing tab
-        const createNewWindow = request.createNewWindow === true; // Default false (scrape in current window)
+        // Check cooldown period (1 hour)
+        chrome.storage.local.get(['lastScrapeTime'], (result) => {
+            const lastScrapeTime = result.lastScrapeTime || 0;
+            const now = Date.now();
+            const oneHour = 60 * 60 * 1000; // 1 hour in milliseconds
+            const timeSinceLastScrape = now - lastScrapeTime;
 
-        if (!createNewWindow) {
-            // Simple mode: scrape in current context
-            const progressCallback = (message) => {
-                if (sender.tab) {
-                    chrome.tabs.sendMessage(sender.tab.id, {
-                        action: 'scrapeProgress',
-                        message: message
-                    }).catch(() => {});
-                }
-            };
+            if (timeSinceLastScrape < oneHour) {
+                const timeRemaining = oneHour - timeSinceLastScrape;
+                const minutesRemaining = Math.ceil(timeRemaining / (60 * 1000));
 
-            scraper.startAutoScrape(progressCallback, null).then(() => {
-                sendResponse({ success: true, message: 'Scraping complete' });
-            }).catch((error) => {
-                sendResponse({ success: false, message: error.message });
-            });
+                console.log('[BACKGROUND] Scraping cooldown active, rejecting request');
+                sendResponse({
+                    success: false,
+                    message: `Please wait ${minutesRemaining} more minute(s) before scraping again.`
+                });
+                return;
+            }
 
-            return true;
-        }
+            // Cooldown period passed, proceed with scraping
+            proceedWithScraping();
+        });
+
+        // Function to handle the actual scraping logic
+        function proceedWithScraping() {
+            // Check if we should create a new window or use existing tab
+            const createNewWindow = request.createNewWindow !== false; // Default true (scrape in separate window)
+
+            if (!createNewWindow) {
+                // Simple mode: scrape in current context
+                const progressCallback = (message) => {
+                    if (sender.tab) {
+                        chrome.tabs.sendMessage(sender.tab.id, {
+                            action: 'scrapeProgress',
+                            message: message
+                        }).catch(() => {});
+                    }
+                };
+
+                scraper.startAutoScrape(progressCallback, null).then(() => {
+                    // Update last scrape time
+                    chrome.storage.local.set({ lastScrapeTime: Date.now() });
+                    sendResponse({ success: true, message: 'Scraping complete' });
+                }).catch((error) => {
+                    sendResponse({ success: false, message: error.message });
+                });
+
+                return;
+            }
 
         // New window mode: create dedicated scraping window
         const originalTabId = sender.tab?.id;
@@ -100,6 +127,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     // Small delay to ensure page is fully ready
                     setTimeout(() => {
                         scraper.startAutoScrape(progressCallback, newWindow.id).then(() => {
+                            // Update last scrape time
+                            chrome.storage.local.set({ lastScrapeTime: Date.now() });
                             sendResponse({ success: true, message: 'Scraping complete' });
 
                             // Clean up marker
@@ -120,6 +149,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 }
             });
         });
+        }
 
         return true;
     }
