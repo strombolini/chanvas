@@ -2,6 +2,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     const openaiApiKeyInput = document.getElementById('openaiApiKey');
     const saveButton = document.getElementById('saveSettings');
+    const downloadButton = document.getElementById('downloadCorpus');
     const statusMessage = document.getElementById('statusMessage');
 
     // Load saved settings
@@ -57,4 +58,57 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 3000);
         }
     }
+
+    // Download raw corpus (plain text format as fed into RAG model)
+    downloadButton.addEventListener('click', async function() {
+        try {
+            showStatus('Preparing corpus download...', 'info');
+            downloadButton.disabled = true;
+
+            // Get scraped data (already has HTML stripped)
+            const canvasData = await new Promise((resolve) => {
+                chrome.storage.local.get(['canvasData'], (result) => {
+                    resolve(result.canvasData || null);
+                });
+            });
+
+            if (!canvasData || !canvasData.courses) {
+                showStatus('No scraped data found. Please scrape courses first.', 'error');
+                downloadButton.disabled = false;
+                return;
+            }
+
+            // Build raw text exactly like RAG model does
+            let rawText = '';
+            for (const courseId in canvasData.courses) {
+                const course = canvasData.courses[courseId];
+                rawText += `Course: ${course.name} (ID: ${courseId})\n\n`;
+                for (const pageName in course.pages) {
+                    const page = course.pages[pageName];
+                    rawText += `\n=== ${pageName.toUpperCase()} ===\n`;
+                    rawText += page.content; // Already HTML-stripped
+                    rawText += '\n\n';
+                }
+            }
+
+            // Create download as plain text file
+            const blob = new Blob([rawText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chanvas-corpus-raw-${new Date().toISOString().split('T')[0]}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showStatus(`✓ Raw corpus downloaded! (${Object.keys(canvasData.courses).length} courses)`, 'success');
+            downloadButton.disabled = false;
+
+        } catch (error) {
+            console.error('Error downloading corpus:', error);
+            showStatus(`Error: ${error.message}`, 'error');
+            downloadButton.disabled = false;
+        }
+    });
 });

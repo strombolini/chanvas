@@ -7,6 +7,7 @@
     "activeTab",
     "cookies",
     "storage",
+    "unlimitedStorage",
     "tabs",
     "scripting",
     "unlimitedStorage"
@@ -43,4 +44,5 @@
     "default_popup": "popup.html",
     "default_title": "Chanvas Scraper & Chat"
   }
+
 }

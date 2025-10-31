@@ -2436,6 +2436,82 @@ def login_callback():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+# -----------------------------------------------------------------------------
+# Extension OAuth (no database - just authentication)
+# -----------------------------------------------------------------------------
+
+@app.route("/extension/login")
+def extension_login():
+    """Start OAuth flow for extension - no database queries"""
+    redirect_uri = url_for("extension_callback", _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route("/extension/callback")
+def extension_callback():
+    """Handle OAuth callback for extension - no database, just authenticate"""
+    try:
+        token = google.authorize_access_token()
+        user_info = token.get('userinfo')
+
+        if not user_info:
+            body = "<div class='card'>Failed to get user info from Google. <a href='/extension/login'>Try again</a></div>"
+            return ocean_layout("Login Error", body), 400
+
+        email = user_info.get('email', '').lower()
+        name = user_info.get('name', '')
+
+        # Restrict to Cornell emails only
+        if not email.endswith('@cornell.edu'):
+            body = "<div class='card'>Only Cornell email addresses (@cornell.edu) are allowed. <a href='/extension/login'>Back</a></div>"
+            return ocean_layout("Access Denied", body), 403
+
+        # Store auth info in session (no database)
+        session["extension_email"] = email
+        session["extension_name"] = name
+        session["extension_authenticated"] = True
+
+        # Return success page that extension can detect
+        body = f"""
+<div class="card" style="text-align:center;">
+  <h2 style="color:#28a745;">✓ Login Successful!</h2>
+  <p>Welcome, {name}</p>
+  <p style="color:#666;font-size:14px;">{email}</p>
+  <div style="margin-top:20px;padding:15px;background:#d4edda;border-radius:8px;">
+    <p style="margin:0;font-size:14px;">You can now close this tab and return to the extension.</p>
+  </div>
+</div>
+<script>
+// Send message to extension that login succeeded
+window.postMessage({{ type: 'CHANVAS_AUTH_SUCCESS', email: '{email}', name: '{name}' }}, '*');
+</script>
+"""
+        return ocean_layout("Chanvas Extension • Login Success", body)
+
+    except Exception as e:
+        logger.error(f"Extension OAuth callback error: {str(e)}")
+        body = f"<div class='card'>Login failed: {str(e)}. <a href='/extension/login'>Try again</a></div>"
+        return ocean_layout("Login Error", body), 500
+
+@app.route("/extension/check_auth")
+def extension_check_auth():
+    """Check if extension user is authenticated"""
+    if session.get("extension_authenticated"):
+        return jsonify({
+            "authenticated": True,
+            "email": session.get("extension_email"),
+            "name": session.get("extension_name")
+        })
+    return jsonify({"authenticated": False}), 401
+
+@app.route("/extension/logout")
+def extension_logout():
+    """Logout extension user"""
+    session.pop("extension_email", None)
+    session.pop("extension_name", None)
+    session.pop("extension_authenticated", None)
+    return jsonify({"success": True})
+
 # -----------------------------------------------------------------------------
 # Dashboard and job control (adds Test Scrape button) + Live Duo banner
 # -----------------------------------------------------------------------------
