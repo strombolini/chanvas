@@ -10,7 +10,7 @@
     "unlimitedStorage",
     "tabs",
     "scripting",
-    "unlimitedStorage"
+    "alarms"
   ],
   "host_permissions": [
     "https://canvas.cornell.edu/*",
@@ -33,7 +33,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["chat-widget.html", "chat-widget.js", "rag.js"],
+      "resources": ["chat-widget.html", "chat-widget.js"],
       "matches": ["https://canvas.cornell.edu/*"]
     }
   ],

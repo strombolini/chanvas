@@ -13,7 +13,6 @@
     let conversationHistory = [];
     let isProcessing = false;
     let openaiApiKey = null;
-    let ragInstance = null;
 
     // Initialize
     async function init() {
@@ -30,16 +29,17 @@
             return;
         }
 
-        // Initialize RAG
-        console.log('[CHAT WIDGET] Initializing RAG...');
-        ragInstance = new ExtensionRAG();
-        await ragInstance.init();
-        console.log('[CHAT WIDGET] RAG initialized');
-
-        // Check if data is indexed
-        const ragData = await chrome.storage.local.get(['ragIndex']);
-        if (ragData.ragIndex && ragData.ragIndex.chunks) {
-            updateStatus(`${ragData.ragIndex.chunks.length} chunks indexed`);
+        // Check if compressed context exists
+        const scrapedData = await chrome.storage.local.get(['scrapedCanvasData']);
+        if (scrapedData.scrapedCanvasData && scrapedData.scrapedCanvasData.courses) {
+            const compressedContext = scrapedData.scrapedCanvasData.courses._compressedContext;
+            if (compressedContext) {
+                const contextLength = compressedContext.length;
+                updateStatus(`Course data available (${Math.round(contextLength / 1000)}k chars)`);
+                console.log('[CHAT WIDGET] Compressed context found:', contextLength, 'characters');
+            } else {
+                updateStatus('No course data. Please scrape your Canvas courses first.');
+            }
         } else {
             updateStatus('No course data. Please scrape your Canvas courses first.');
         }
@@ -136,6 +136,32 @@
         scrollToBottom();
     }
 
+    function createStreamingMessageElement(role) {
+        const emptyState = chatMessages.querySelector('.empty-state');
+        if (emptyState) {
+            emptyState.remove();
+        }
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}`;
+
+        const avatar = document.createElement('div');
+        avatar.className = 'message-avatar';
+        avatar.textContent = role === 'user' ? '👤' : '🤖';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.innerHTML = '';
+
+        messageDiv.appendChild(avatar);
+        messageDiv.appendChild(contentDiv);
+        chatMessages.appendChild(messageDiv);
+
+        scrollToBottom();
+
+        return { messageDiv, contentDiv };
+    }
+
     // Format message content
     function formatMessageContent(content) {
         // Convert line breaks
@@ -186,10 +212,26 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    // Get current US Eastern date
+    function getUSEasternDate() {
+        // Get current time in US Eastern timezone
+        const now = new Date();
+        const easternTime = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"}));
+        
+        // Format as: "December 25, 2024"
+        const options = { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric',
+            timeZone: 'America/New_York'
+        };
+        return easternTime.toLocaleDateString('en-US', options);
+    }
+
     // Send message
     async function sendMessage() {
         console.log('[CHAT WIDGET] Send message triggered');
-        const message = chatInput.value.trim();
+        let message = chatInput.value.trim();
         console.log('[CHAT WIDGET] Message:', message);
         console.log('[CHAT WIDGET] Is processing:', isProcessing);
 
@@ -206,17 +248,21 @@
 
         console.log('[CHAT WIDGET] Proceeding with message send');
 
+        // Add current US Eastern date to the message
+        const currentDate = getUSEasternDate();
+        const messageWithDate = `[Current Date: ${currentDate}]\n\n${message}`;
+
         // Clear input
         chatInput.value = '';
         chatInput.style.height = 'auto';
 
-        // Add user message to UI
+        // Add user message to UI (show original message without date prefix in UI)
         addMessageToUI('user', message);
 
-        // Add to history
+        // Add to history (use messageWithDate so date is included in conversation)
         conversationHistory.push({
             role: 'user',
-            content: message
+            content: messageWithDate  // Include date in the actual message sent to API
         });
         saveChatHistory();
 
@@ -228,29 +274,69 @@
         // Show typing indicator
         showTypingIndicator();
 
+        let assistantMessageBuffer = '';
+        let assistantContentDiv = null;
+        let assistantMessageElement = null;
+
+        const ensureAssistantMessageElement = () => {
+            if (!assistantContentDiv) {
+                removeTypingIndicator();
+                const streamingElements = createStreamingMessageElement('assistant');
+                assistantMessageElement = streamingElements.messageDiv;
+                assistantContentDiv = streamingElements.contentDiv;
+            }
+        };
+
         try {
-            // Get relevant context from RAG
-            console.log('[CHAT WIDGET] Retrieving context from RAG...');
-            const ragContext = await ragInstance.retrieveContext(message);
-            console.log('[CHAT WIDGET] RAG context retrieved:', ragContext.chunks?.length, 'chunks');
+            // Get compressed context from storage
+            console.log('[CHAT WIDGET] Retrieving compressed context from storage...');
+            const scrapedData = await chrome.storage.local.get(['scrapedCanvasData']);
+            let compressedContext = null;
+            
+            if (scrapedData.scrapedCanvasData && scrapedData.scrapedCanvasData.courses) {
+                compressedContext = scrapedData.scrapedCanvasData.courses._compressedContext;
+                if (compressedContext) {
+                    console.log('[CHAT WIDGET] Compressed context retrieved:', compressedContext.length, 'characters');
+                } else {
+                    console.warn('[CHAT WIDGET] No compressed context found in courses data');
+                }
+            } else {
+                console.warn('[CHAT WIDGET] No scraped data found');
+            }
+
+            if (!compressedContext) {
+                console.warn('[CHAT WIDGET] No context available - proceeding without context');
+                updateStatus('No course data available. Please scrape your Canvas courses first.');
+            }
 
             // Build messages for OpenAI
             console.log('[CHAT WIDGET] Building messages for OpenAI...');
-            const messages = [
-                {
+            const messages = [];
+            
+            // Add system message with context if available
+            if (compressedContext) {
+                messages.push({
                     role: 'system',
-                    content: `You are a helpful assistant for Canvas course questions. Use the following context from the user's Canvas courses to answer their question. If the context doesn't contain relevant information, say so.
+                    content: `You are a helpful assistant for Canvas course questions. Use the following cleaned and organized course content from the user's Canvas courses to answer their question. The content has been cleaned of HTML artifacts and organized by course.
 
-Context:
-${ragContext.context || 'No relevant context found.'}
+If the context doesn't contain relevant information to answer the question, say so clearly. Provide clear, concise answers based on the context.
 
-Provide clear, concise answers based on the context above.`
-                },
-                ...conversationHistory.slice(-10) // Last 10 messages for context
-            ];
+=== COURSE CONTENT ===
+${compressedContext}
+=== END COURSE CONTENT ===`
+                });
+            } else {
+                messages.push({
+                    role: 'system',
+                    content: `You are a helpful assistant for Canvas course questions. The user has not scraped their Canvas courses yet, so you don't have access to their course content. Please let them know they need to scrape their courses first.`
+                });
+            }
+            
+            // Add conversation history
+            messages.push(...conversationHistory.slice(-10)); // Last 10 messages for context
 
-            // Call OpenAI API
-            console.log('[CHAT WIDGET] Calling OpenAI API...');
+            // Call OpenAI API with GPT-5-nano
+            console.log('[CHAT WIDGET] Calling OpenAI API with GPT-5-nano...');
             const response = await fetch('https://api.openai.com/v1/chat/completions', {
                 method: 'POST',
                 headers: {
@@ -258,36 +344,92 @@ Provide clear, concise answers based on the context above.`
                     'Authorization': `Bearer ${openaiApiKey}`
                 },
                 body: JSON.stringify({
-                    model: 'gpt-4o-mini',
-                    messages: messages,
-                    temperature: 0.7,
-                    max_tokens: 1000
+                    model: 'gpt-5-nano',
+                    stream: true,
+                    messages: messages
                 })
             });
 
             console.log('[CHAT WIDGET] API response status:', response.status);
 
             if (!response.ok) {
-                const error = await response.json();
-                console.error('[CHAT WIDGET] API error:', error);
-                throw new Error(error.error?.message || 'API request failed');
+                let errorDetail = 'API request failed';
+                try {
+                    const error = await response.json();
+                    console.error('[CHAT WIDGET] API error:', error);
+                    errorDetail = error.error?.message || errorDetail;
+                } catch (_) {}
+                throw new Error(errorDetail);
             }
 
-            const data = await response.json();
-            console.log('[CHAT WIDGET] API response received');
-            const assistantMessage = data.choices[0].message.content;
-            console.log('[CHAT WIDGET] Assistant message:', assistantMessage.substring(0, 100));
+            const reader = response.body?.getReader ? response.body.getReader() : null;
 
-            // Remove typing indicator
+            if (reader) {
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let streamingComplete = false;
+
+                const processBuffer = () => {
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop();
+                    for (const part of parts) {
+                        const trimmed = part.trim();
+                        if (!trimmed.startsWith('data:')) continue;
+                        const dataStr = trimmed.slice(5).trim();
+                        if (!dataStr || dataStr === '[DONE]') {
+                            streamingComplete = true;
+                            continue;
+                        }
+                        let payload;
+                        try {
+                            payload = JSON.parse(dataStr);
+                        } catch (e) {
+                            console.warn('[CHAT WIDGET] Failed to parse stream chunk:', e);
+                            continue;
+                        }
+                        const delta = payload.choices?.[0]?.delta;
+                        if (delta?.content) {
+                            ensureAssistantMessageElement();
+                            assistantMessageBuffer += delta.content;
+                            assistantContentDiv.innerHTML = formatMessageContent(assistantMessageBuffer);
+                            scrollToBottom();
+                        }
+                    }
+                };
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    processBuffer();
+                    if (streamingComplete) break;
+                }
+
+                if (buffer.trim()) {
+                    processBuffer();
+                }
+            } else {
+                console.warn('[CHAT WIDGET] Streaming not supported, falling back to standard response.');
+                const data = await response.json();
+                const assistantMessage = data.choices[0]?.message?.content || '';
+                ensureAssistantMessageElement();
+                assistantMessageBuffer = assistantMessage;
+                assistantContentDiv.innerHTML = formatMessageContent(assistantMessageBuffer);
+                scrollToBottom();
+            }
+
+            ensureAssistantMessageElement();
             removeTypingIndicator();
 
-            // Add assistant message to UI
-            addMessageToUI('assistant', assistantMessage);
+            let finalAssistantMessage = assistantMessageBuffer.trim();
+            if (!finalAssistantMessage) {
+                finalAssistantMessage = 'I’m sorry, I could not generate a response.';
+                assistantContentDiv.innerHTML = formatMessageContent(finalAssistantMessage);
+            }
 
-            // Add to history
             conversationHistory.push({
                 role: 'assistant',
-                content: assistantMessage
+                content: finalAssistantMessage
             });
             saveChatHistory();
 

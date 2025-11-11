@@ -113,9 +113,30 @@
 
     <button id="saveSettings" class="btn">Save API Key</button>
 
+    <div class="section" style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
+        <input type="checkbox" id="syllabusOnlyMode" style="width: auto; margin: 0;">
+        <label for="syllabusOnlyMode" style="font-size: 12px; font-weight: normal; margin: 0;">
+            Syllabus-only mode (scrape only files/pages with "syllabus" in URL)
+        </label>
+    </div>
+
+    <button id="startScrape" class="btn" style="margin-top: 10px; background: #28a745;">Start Scraping</button>
+    <button id="stopScrape" class="btn" style="margin-top: 10px; background: #dc3545; display: none;">Stop Scraping</button>
+
     <button id="downloadCorpus" class="btn secondary" style="margin-top: 10px;">Download Raw Corpus</button>
 
     <div id="statusMessage" style="display: none; margin-top: 10px; padding: 8px; border-radius: 4px; font-size: 11px;"></div>
+
+    <div id="progressIndicator" style="display: none; margin: 15px auto; text-align: center;">
+        <svg width="60" height="60" viewBox="0 0 36 36" style="transform: rotate(-90deg);">
+            <!-- Background circle -->
+            <circle cx="18" cy="18" r="16" fill="none" stroke="#e0e0e0" stroke-width="2"></circle>
+            <!-- Progress circle -->
+            <circle id="progressCircle" cx="18" cy="18" r="16" fill="none" stroke="#28a745" stroke-width="2" 
+                    stroke-dasharray="0 100" stroke-linecap="round"></circle>
+        </svg>
+        <div id="progressText" style="margin-top: 8px; font-size: 12px; color: #666; font-weight: bold;">0/0</div>
+    </div>
 
     <div class="instructions">
         <strong>How to use:</strong>
@@ -136,7 +157,6 @@
         </div>
     </div>
 
-    <script src="rag.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

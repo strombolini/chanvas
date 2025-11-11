@@ -180,9 +180,9 @@ class ExtensionRAG {
             throw new Error('OpenAI API key not configured. Please set it in the extension popup settings.');
         }
 
-        const chunks = [];
-        const chunkMetadata = [];
-
+        // First, generate an executive summary of all course data
+        console.log('[RAG] Generating executive summary...');
+        const allContent = [];
         for (const courseId in coursesData) {
             const course = coursesData[courseId];
             let courseContent = `Course: ${course.name} (ID: ${courseId})\n\n`;
@@ -192,19 +192,83 @@ class ExtensionRAG {
                 courseContent += page.content;
                 courseContent += '\n\n';
             }
-            const courseChunks = this.chunkText(courseContent, this.CHUNK_SIZE);
+            allContent.push(courseContent);
+        }
+        
+        // Combine all content for summary (limit to avoid token limits)
+        const combinedContent = allContent.join('\n\n---\n\n');
+        const summaryText = combinedContent.length > 200000 ? combinedContent.substring(0, 200000) + '...' : combinedContent;
+        
+        // Generate executive summary using GPT
+        let executiveSummary = '';
+        try {
+            const summaryResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    messages: [
+                        {
+                            role: 'system',
+                            content: 'You are creating an executive summary of Canvas course materials. Create a brief, comprehensive overview of all courses, their key topics, important assignments, deadlines, and syllabi content. Keep it under 500 words but include all critical information.'
+                        },
+                        {
+                            role: 'user',
+                            content: `Create an executive summary of the following Canvas course materials:\n\n${summaryText}`
+                        }
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 800
+                })
+            });
+            
+            if (summaryResponse.ok) {
+                const summaryData = await summaryResponse.json();
+                executiveSummary = summaryData.choices[0].message.content;
+                console.log('[RAG] Executive summary generated');
+            } else {
+                console.warn('[RAG] Failed to generate executive summary, continuing without it');
+                executiveSummary = `Overview: ${Object.keys(coursesData).length} courses scraped with course materials.`;
+            }
+        } catch (e) {
+            console.warn('[RAG] Error generating executive summary:', e);
+            executiveSummary = `Overview: ${Object.keys(coursesData).length} courses scraped with course materials.`;
+        }
+
+        const chunks = [];
+        const chunkMetadata = [];
+
+        // Add executive summary as first chunk (always retrieved for context)
+        chunks.push(`EXECUTIVE SUMMARY OF ALL COURSE MATERIALS:\n\n${executiveSummary}`);
+        chunkMetadata.push({
+            courseId: '_executive_summary',
+            courseName: 'Executive Summary',
+            chunkIndex: 0,
+            totalChunks: 1,
+            isExecutiveSummary: true
+        });
+
+        // Then add all course chunks
+        for (let i = 0; i < allContent.length; i++) {
+            const courseId = Object.keys(coursesData)[i];
+            const course = coursesData[courseId];
+            const courseChunks = this.chunkText(allContent[i], this.CHUNK_SIZE);
             courseChunks.forEach((chunk, index) => {
                 chunks.push(chunk);
                 chunkMetadata.push({
                     courseId,
                     courseName: course.name,
                     chunkIndex: index,
-                    totalChunks: courseChunks.length
+                    totalChunks: courseChunks.length,
+                    isExecutiveSummary: false
                 });
             });
         }
 
-        console.log(`[RAG] Created ${chunks.length} chunks from ${Object.keys(coursesData).length} courses`);
+        console.log(`[RAG] Created ${chunks.length} chunks (1 executive summary + ${chunks.length - 1} course chunks) from ${Object.keys(coursesData).length} courses`);
 
         const batchSize = 100;
         const allEmbeddings = [];
@@ -297,9 +361,17 @@ class ExtensionRAG {
         }
 
         scores.sort((a, b) => b.similarity - a.similarity);
+        
+        // ALWAYS include executive summary if available (it's chunk index 0)
+        const executiveSummaryItem = scores.find(s => s.metadata && s.metadata.isExecutiveSummary);
         const top = scores.slice(0, topK);
+        
+        // If executive summary exists and isn't already in top results, add it
+        if (executiveSummaryItem && !top.find(item => item.metadata && item.metadata.isExecutiveSummary)) {
+            top.unshift(executiveSummaryItem);
+        }
 
-        console.log(`[RAG] Retrieved ${top.length} relevant chunks`);
+        console.log(`[RAG] Retrieved ${top.length} relevant chunks${executiveSummaryItem ? ' (including executive summary)' : ''}`);
         console.log(`[RAG] Top similarity scores:`, top.map(c => c.similarity.toFixed(3)));
 
         const context = top.map(item => item.chunk).join('\n\n---\n\n');

@@ -103,6 +103,13 @@
         if (request.action === 'scrapeProgress') {
             showNotification(request.message);
         }
+        
+        // Handle keep-alive pings to prevent tab from being discarded
+        if (request.type === 'PING') {
+            // Respond immediately to keep the tab active
+            sendResponse({ status: 'alive', timestamp: Date.now() });
+            return true; // Indicates we'll send response asynchronously (even though we're doing it synchronously)
+        }
     });
 
     // Check if this tab is in a scraping window

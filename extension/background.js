@@ -1,9 +1,9 @@
 // Background script to handle cookie extraction, messaging, and auto-scraping
-// Import the auto-scraper and RAG system
-importScripts('canvas-auto-scraper-v2.js', 'rag.js');
+// Import the auto-scraper (NO RAG - using GPT-5-nano directly with compressed context)
+importScripts('canvas_scraperpy.js');
 
 // Initialize the scraper
-const scraper = new CanvasAutoScraper();
+const scraper = new CanvasScraperPy();
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'getCookies') {
@@ -70,16 +70,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
             if (!createNewWindow) {
                 // Simple mode: scrape in current context
-                const progressCallback = (message) => {
+                const progressCallback = (payload) => {
+                    const data = typeof payload === 'string' ? { message: payload } : (payload || {});
                     if (sender.tab) {
                         chrome.tabs.sendMessage(sender.tab.id, {
                             action: 'scrapeProgress',
-                            message: message
+                            message: data.message ?? data.text ?? null,
+                            discovered: data.discovered ?? null,
+                            scraped: data.scraped ?? null,
+                            done: Boolean(data.done),
+                            notify: data.notify !== undefined ? data.notify : true
                         }).catch(() => {});
                     }
                 };
 
-                scraper.startAutoScrape(progressCallback, null).then(() => {
+                scraper.startAutoScrape(progressCallback, null, request.syllabusOnlyMode || false).then(() => {
                     // Update last scrape time
                     chrome.storage.local.set({ lastScrapeTime: Date.now() });
                     sendResponse({ success: true, message: 'Scraping complete' });
@@ -109,12 +114,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 [`scrapingWindow_${newWindow.id}`]: true
             });
 
-            const progressCallback = (message) => {
-                // Only send to original tab
+            const progressCallback = (payload) => {
+                const data = typeof payload === 'string' ? { message: payload } : (payload || {});
                 if (originalTabId) {
                     chrome.tabs.sendMessage(originalTabId, {
                         action: 'scrapeProgress',
-                        message: message
+                        message: data.message ?? data.text ?? null,
+                        discovered: data.discovered ?? null,
+                        scraped: data.scraped ?? null,
+                        done: Boolean(data.done),
+                        notify: data.notify !== undefined ? data.notify : true
                     }).catch(() => {});
                 }
             };
@@ -126,7 +135,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
                     // Small delay to ensure page is fully ready
                     setTimeout(() => {
-                        scraper.startAutoScrape(progressCallback, newWindow.id).then(() => {
+                        scraper.startAutoScrape(progressCallback, newWindow.id, request.syllabusOnlyMode || false).then(() => {
                             // Update last scrape time
                             chrome.storage.local.set({ lastScrapeTime: Date.now() });
                             sendResponse({ success: true, message: 'Scraping complete' });
@@ -158,6 +167,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'getScrapedData') {
         scraper.getScrapedData().then((data) => {
             sendResponse({ success: true, data: data });
+        }).catch((error) => {
+            sendResponse({ success: false, message: error.message });
+        });
+        return true;
+    }
+
+    // New: Stop scraping
+    if (request.action === 'stopAutoScrape') {
+        scraper.stopScraping().then(() => {
+            sendResponse({ success: true, message: 'Scraping stopped' });
         }).catch((error) => {
             sendResponse({ success: false, message: error.message });
         });
